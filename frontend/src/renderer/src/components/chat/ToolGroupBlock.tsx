@@ -10,9 +10,11 @@ interface ToolCall {
 }
 
 function toolStatusIcon(s: string) {
-  if (s === 'done') return <IconCheck size={10} className={styles.iconZap} />
-  if (s === 'running') return <IconLoader size={10} className={styles.iconZap} />
-  return <IconXCircle size={10} className={styles.iconZap} />
+  // 三态区分：完成绿勾 / 运行中旋转 loader / 失败红叉（运行中图标此前是静止的，
+  // 失败与成功同色，均修复）
+  if (s === 'done') return <IconCheck size={10} className={styles.statusDone} />
+  if (s === 'running') return <IconLoader size={10} className={styles.statusRunning} />
+  return <IconXCircle size={10} className={styles.statusError} />
 }
 
 function fmtElapsed(ms: number): string {

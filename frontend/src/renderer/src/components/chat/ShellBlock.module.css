@@ -57,6 +57,47 @@
   50% { opacity: 0.3; }
 }
 
+/* 终态图标：失败红叉 / 成功绿勾，靠右对齐（取代运行中的脉冲圆点位置） */
+.failIcon {
+  color: var(--red);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.okIcon {
+  color: var(--green);
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+/* 失败时 label 染红，整行可一眼识别 */
+.labelFailed {
+  color: var(--red);
+}
+
+/* 进程退出码徽章：崩溃红色 / 正常退出弱化（等宽字体） */
+.exitBadgeFail {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+}
+
+.exitBadgeOk {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+}
+
 .body {
   padding: 0;
 }

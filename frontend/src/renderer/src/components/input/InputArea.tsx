@@ -239,6 +239,8 @@ export default function InputArea() {
       const d = restoreDraft(sessionId)
       setText(d?.text ?? '')
       setAttachedFiles(d?.attachedFiles ?? [])
+      // 切换会话 / 首次挂载后把焦点给输入框，进入即可直接输入
+      textareaRef.current?.focus()
     } else {
       setText('')
       setAttachedFiles([])
@@ -432,6 +434,8 @@ export default function InputArea() {
       return
     }
     setText('')
+    // 插话后把焦点还给输入框，保持连续输入的手感
+    textareaRef.current?.focus()
   }
 
   const handleSend = async () => {
@@ -460,10 +464,24 @@ export default function InputArea() {
       await sendMessage({ sessionId: sid, content, attachedFiles: filesToSend, skills: selectedSkills.length > 0 ? selectedSkills : undefined, quotedSelections: selectionsToSend })
     } finally {
       sendingRef.current = false
+      // 发送后（无论成功/失败/回滚）把焦点还给输入框，避免焦点停在按钮上
+      textareaRef.current?.focus()
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // 中文输入法组合态：此时 Enter/方向键/Esc 都在选词（Chrome 派发
+    // isComposing=true 的 keydown），绝不能触发发送、插话或菜单操作，
+    // 否则会把未上屏的拼音原文当消息发出去。
+    if (e.nativeEvent.isComposing) return
+
+    // 斜杠菜单打开时：Enter/方向键交给菜单的 document 级监听独占处理
+    // （选中命令 / 移动高亮，菜单内部已 preventDefault），避免这里同时
+    // 触发发送导致"发出 /xxx 原文 + 又执行一次命令"的双触发。
+    if (showSlashMenu && (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      return
+    }
+
     if (showSlashMenu && e.key === 'Escape') {
       e.preventDefault()
       closeSlashMenu()
@@ -628,6 +646,7 @@ export default function InputArea() {
             rows={2}
             disabled={isDisconnected || isImSession}
             className={styles.textarea}
+            data-chat-input=""
           />
           {showSlashMenu && (
             <SlashCommandMenu

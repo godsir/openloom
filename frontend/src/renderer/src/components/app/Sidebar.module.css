@@ -50,7 +50,7 @@
 
 .batchBtn:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .batchDanger:hover {
@@ -65,8 +65,8 @@
   height: 34px;
   padding: 0 12px;
   border-radius: var(--r-md);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(var(--accent-rgb), 0.04);
+  border: 1px solid var(--border);
 }
 
 .searchIcon {
@@ -95,7 +95,7 @@
   height: 18px;
   border-radius: 50%;
   border: none;
-  background: rgba(255,255,255,0.08);
+  background: rgba(var(--accent-rgb), 0.1);
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
@@ -104,7 +104,7 @@
 }
 
 .searchClear:hover {
-  background: rgba(255,255,255,0.15);
+  background: rgba(var(--accent-rgb), 0.18);
   color: var(--text);
 }
 
@@ -180,7 +180,7 @@
 
 .sectionAddBtn:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .cronItem {
@@ -194,7 +194,7 @@
 }
 
 .cronItem:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 
 .cronItemActive {

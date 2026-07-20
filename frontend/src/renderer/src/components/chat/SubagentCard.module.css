@@ -68,6 +68,16 @@
 .iconGreen { color: var(--green); }
 .iconAmber { color: var(--amber); }
 
+/* 运行中 loader 旋转（此前是静止的放射状图形，看起来像已完成） */
+.spin {
+  animation: subagentSpin 1s linear infinite;
+}
+
+@keyframes subagentSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .chevronUp {
   color: var(--text-muted);
   transform: rotate(180deg);

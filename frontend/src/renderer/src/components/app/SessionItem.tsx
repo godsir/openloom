@@ -54,7 +54,17 @@ export default function SessionItem({ session }: { session: SessionSummary }) {
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={handleClick}
+      onKeyDown={e => {
+        // 只在本元素自身获得焦点时响应，避免干扰子元素（重命名输入框、固定按钮）
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          handleClick()
+        }
+      }}
       onContextMenu={e => {
         if (selectionMode) return
         e.preventDefault(); setMenuPos({ x: e.clientX, y: e.clientY }); setMenuOpen(true)

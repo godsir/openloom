@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useLocale } from '../../i18n'
 import type { ContentBlock } from '../../stores/chat'
 import { IconChevronRight, IconChevronDown, IconBrain } from '../../utils/icons'
@@ -23,9 +23,17 @@ export default function ThinkingBlock({ block }: { block: ContentBlock }) {
     return () => window.removeEventListener('loom-pref-changed', handler)
   }, [])
 
-  // Auto-scroll thinking body to bottom when content grows during streaming
+  // Auto-scroll thinking body to bottom when content grows during streaming.
+  // 智能跟随：用户上翻阅读早期推理时不再被拽回（与 ShellBlock 同语义）。
+  const userScrolledUp = useRef(false)
+  const handleScroll = useCallback(() => {
+    if (!bodyRef.current) return
+    const el = bodyRef.current
+    userScrolledUp.current = el.scrollHeight - el.scrollTop - el.clientHeight > 40
+  }, [])
+
   useEffect(() => {
-    if (expanded && bodyRef.current) {
+    if (expanded && bodyRef.current && !userScrolledUp.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight
     }
   }, [content, expanded])
@@ -43,7 +51,7 @@ export default function ThinkingBlock({ block }: { block: ContentBlock }) {
         {!sealed && <span className={styles.dot} />}
       </button>
       {expanded && (
-        <div ref={bodyRef} className={styles.body}>{content}</div>
+        <div ref={bodyRef} onScroll={handleScroll} className={styles.body}>{content}</div>
       )}
     </div>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useStore } from '../../stores'
 import type { Toast } from '../../stores/toast'
 import { IconCheck, IconAlertCircle, IconXCircle, IconX } from '../../utils/icons'
@@ -18,26 +18,54 @@ const TYPE_LABELS: Record<string, string> = {
   error: 'Error',
 }
 
+/** 退场动画时长，需与 .toastExiting 的 0.18s 保持一致 */
+const EXIT_MS = 180
+
 function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) {
   const duration = toast.duration ?? 4000
-  const progressRef = useRef<HTMLDivElement>(null)
+  const [exiting, setExiting] = useState(false)
+  const [paused, setPaused] = useState(false)
+  // 用 ref 持有最新 onRemove，避免父组件重渲染使计时器 effect 反复重置
+  const onRemoveRef = useRef(onRemove)
+  onRemoveRef.current = onRemove
+  const remainingRef = useRef(duration)
+  const startedAtRef = useRef(0)
+  const exitingRef = useRef(false)
 
+  // 触发退场：先播退出动画，EXIT_MS 后再真正从 store 移除（消除硬切与堆叠跳动）
+  const dismiss = useCallback(() => {
+    if (exitingRef.current) return
+    exitingRef.current = true
+    setExiting(true)
+    setTimeout(() => onRemoveRef.current(), EXIT_MS)
+  }, [])
+
+  // 自动消失计时器：悬停暂停（记录剩余时长），离开续上
   useEffect(() => {
-    if (duration <= 0) return
-    const el = progressRef.current
-    if (!el) return
-    // Trigger shrink animation
-    const raf = requestAnimationFrame(() => {
-      el.style.transition = `width ${duration}ms linear`
-      el.style.width = '0%'
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [duration])
+    if (duration <= 0 || exiting || paused) return
+    startedAtRef.current = Date.now()
+    const timer = setTimeout(() => dismiss(), remainingRef.current)
+    return () => clearTimeout(timer)
+  }, [duration, exiting, paused, dismiss])
+
+  const handleMouseEnter = () => {
+    if (exitingRef.current || duration <= 0) return
+    remainingRef.current = Math.max(0, remainingRef.current - (Date.now() - startedAtRef.current))
+    setPaused(true)
+  }
+  const handleMouseLeave = () => {
+    if (exitingRef.current || duration <= 0) return
+    setPaused(false)
+  }
 
   const icon = TYPE_ICONS[toast.type]
 
   return (
-    <div className={`${styles.toast} ${styles[toast.type]}`}>
+    <div
+      className={`${styles.toast} ${styles[toast.type]} ${exiting ? styles.toastExiting : ''}`}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <div className={styles.iconWrap}>
         {icon(16)}
       </div>
@@ -51,19 +79,25 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) 
             className={styles.actionBtn}
             onClick={() => {
               toast.action!.onClick()
-              onRemove()
+              dismiss()
             }}
           >
             {toast.action.label}
           </button>
         )}
-        <button className={styles.closeBtn} onClick={onRemove}>
+        <button className={styles.closeBtn} onClick={dismiss}>
           <IconX size={13} />
         </button>
       </div>
       {duration > 0 && (
         <div className={styles.progressTrack}>
-          <div ref={progressRef} className={styles.progressBar} style={{ width: '100%' }} />
+          <div
+            className={styles.progressBar}
+            style={{
+              animationDuration: `${duration}ms`,
+              animationPlayState: paused || exiting ? 'paused' : 'running',
+            }}
+          />
         </div>
       )}
     </div>

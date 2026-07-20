@@ -4,6 +4,7 @@ import { parseContentParts } from '../stores/session'
 import { loomRpc } from './jsonrpc'
 import { renderMarkdown } from '../utils/markdown'
 import { sanitizeHtml } from '../utils/markdown-sanitizer'
+import { unclosedFenceStart } from '../utils/markdown-fence'
 import { t } from '../i18n'
 
 /** Minimum interval between full markdown-it re-renders of the stable prefix
@@ -26,6 +27,7 @@ interface BufferState {
     pid: string
     lines: Array<{ stream: string; text: string }>
     exited: boolean
+    exitCode: number | null
   }>
   skillCalls: Array<{
     id: string
@@ -62,6 +64,9 @@ interface BufferState {
   mdStable: string
   mdStableHtml: string
   mdLastRenderAt: number
+  /** 正在流式输出的"未闭合代码围栏块"的节流渲染缓存（见 renderMarkdown）。
+   *  围栏内的新行必须渲染在代码块内部，不能当纯文本拼在已闭合的 </code> 之后。 */
+  mdFenceHtml: string
 }
 
 class StreamBufferManager {
@@ -106,6 +111,7 @@ class StreamBufferManager {
     buf.mdStable = ''
     buf.mdStableHtml = ''
     buf.mdLastRenderAt = 0
+    buf.mdFenceHtml = ''
     if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
     useStore.getState().setStreamingActivity(sessionId, { phase: 'generating' })
   }
@@ -146,6 +152,7 @@ class StreamBufferManager {
         mdStable: '',
         mdStableHtml: '',
         mdLastRenderAt: 0,
+        mdFenceHtml: '',
       })
     }
     return this.buffers.get(sessionId)!
@@ -226,7 +233,7 @@ class StreamBufferManager {
 
     let procEntry = buf.processAcc.find(p => p.pid === pid)
     if (!procEntry) {
-      procEntry = { pid, lines: [], exited: false }
+      procEntry = { pid, lines: [], exited: false, exitCode: null }
       buf.processAcc.push(procEntry)
     }
     procEntry.lines.push({ stream, text: data })
@@ -259,9 +266,10 @@ class StreamBufferManager {
    }
     let procEntry = buf.processAcc.find(p => p.pid === pid)
     if (!procEntry) {
-      procEntry = { pid, lines: [], exited: false }
+      procEntry = { pid, lines: [], exited: false, exitCode: null }
       buf.processAcc.push(procEntry)
     }
+    procEntry.exitCode = exitCode
     procEntry.lines.push({ stream: 'system', text: `[进程已退出, code=${exitCode}]` })
     procEntry.exited = true
     this.scheduleFlush(buf, sid)
@@ -670,6 +678,7 @@ class StreamBufferManager {
           pid: proc.pid,
           lines: proc.lines.map(l => ({ stream: l.stream, text: l.text })),
           sealed: proc.exited,
+          exitCode: proc.exitCode,
         })
       }
     }
@@ -740,6 +749,7 @@ class StreamBufferManager {
     if (final) {
       buf.mdStable = ''
       buf.mdStableHtml = ''
+      buf.mdFenceHtml = ''
       return sanitizeHtml(renderMarkdown(source))
     }
     const lastNewline = source.lastIndexOf('\n')
@@ -750,15 +760,43 @@ class StreamBufferManager {
     if (!stable) {
       return sanitizeHtml(renderMarkdown(tail))
     }
+    // ── 围栏感知 ──────────────────────────────────────────────────────────
+    // 若 stable 前缀里存在未闭合代码围栏（正在流式输出代码块），绝不能把新行
+    // 当纯文本拼到已渲染 HTML 之后——markdown-it 会把未闭合围栏在 stable 末尾
+    // 自动闭合，新行就落在 </code></pre> 外面，产生"代码先闪在块外、下次重渲
+    // 才吸进去"的跳变（流式代码时肉眼可见）。此时把 stable 边界前移到开栏行
+    // 之前：围栏之前的前缀走缓存（零开销），当前代码块（开栏行到文末）单独
+    // 节流重渲（最多滞后一帧，但结构始终正确）。
+    const fenceStart = unclosedFenceStart(stable)
+    if (fenceStart >= 0) {
+      const pre = source.slice(0, fenceStart) // 围栏前的稳定前缀
+      const codeBlock = source.slice(fenceStart) // 当前代码块（含未闭合开栏行）
+      if (pre !== buf.mdStable) {
+        buf.mdStable = pre
+        buf.mdStableHtml = pre ? sanitizeHtml(renderMarkdown(pre)) : ''
+        buf.mdFenceHtml = '' // 前缀变了，代码块缓存作废
+      }
+      const now = performance.now()
+      if (!buf.mdFenceHtml || now - buf.mdLastRenderAt >= MD_RERENDER_THROTTLE_MS) {
+        buf.mdFenceHtml = sanitizeHtml(renderMarkdown(codeBlock))
+        buf.mdLastRenderAt = now
+      }
+      return buf.mdStableHtml + buf.mdFenceHtml
+    }
+    // ── 非围栏场景：原有稳定前缀缓存优化 ──────────────────────────────────
+    // 刚从围栏模式切回（代码块闭合）：mdStable 语义已变，强制整段重渲一次，
+    // 避免闭合的代码块短暂以纯文本闪现。
+    const wasFence = buf.mdFenceHtml !== ''
     // Fast path: stable prefix unchanged since the last render (token streaming
     // within a single line) — zero markdown work this frame.
-    if (stable === buf.mdStable && buf.mdStableHtml) {
+    if (stable === buf.mdStable && buf.mdStableHtml && !wasFence) {
       return buf.mdStableHtml + '\n' + escapeHtml(tail)
     }
     const now = performance.now()
-    if (!buf.mdStableHtml || now - buf.mdLastRenderAt >= MD_RERENDER_THROTTLE_MS) {
+    if (wasFence || !buf.mdStableHtml || now - buf.mdLastRenderAt >= MD_RERENDER_THROTTLE_MS) {
       buf.mdStable = stable
       buf.mdStableHtml = sanitizeHtml(renderMarkdown(stable))
+      buf.mdFenceHtml = ''
       buf.mdLastRenderAt = now
       return buf.mdStableHtml + '\n' + escapeHtml(tail)
     }

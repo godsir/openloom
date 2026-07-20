@@ -30,7 +30,6 @@ export default function ChatArea() {
 
   // Track message count for efficient auto-scroll (avoids full array dep)
   const msgCount = messages.length
-  const lastMsgBlocksLen = messages.length > 0 ? messages[messages.length - 1].blocks?.length ?? 0 : 0
 
   const timelineAnchors = useMemo(() => buildTimelineAnchors(messages as any[]), [msgCount])
   const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
@@ -38,11 +37,16 @@ export default function ChatArea() {
   const closeLightbox = useStore(s => s.closeLightbox)
   const { t } = useLocale()
 
-  // Auto-scroll to bottom on new messages when at bottom
+  // Auto-scroll to bottom on new messages when at bottom.
+  // 依赖 messages 引用本身：流式 flush 每次都替换消息数组（块内容增长，但消息数
+  // 与末条块数都不变），若只依赖 [msgCount, lastMsgBlocksLen] 会在长回复流式
+  // 输出时永不触发 → 视口被内容"甩开"且回底按钮不出现。滚到底后同步隐藏回底按钮。
   useEffect(() => {
-    if (!autoScrollRef.current || !scrollRef.current) return
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [msgCount, lastMsgBlocksLen])
+    const el = scrollRef.current
+    if (!el || !autoScrollRef.current) return
+    el.scrollTop = el.scrollHeight
+    setShowScrollBtn(false)
+  }, [messages])
 
   // Reset auto-scroll flag on session switch
   useEffect(() => {

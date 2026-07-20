@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import type { ContentBlock } from '../../stores/chat'
 import styles from './ShellBlock.module.css'
 
 interface ProcessLine {
@@ -88,14 +89,16 @@ function ClawLine({ obj }: { obj: any }) {
   )
 }
 
-export default function ProcessOutputBlock({ block }: {
-  block: { pid?: string; lines?: ProcessLine[]; sealed?: boolean }
-}) {
+export default function ProcessOutputBlock({ block }: { block: ContentBlock }) {
   const [expanded, setExpanded] = useState(true)
   const bodyRef = useRef<HTMLDivElement>(null)
   const pid = (block.pid as string) || '?'
   const lines = (block.lines as ProcessLine[]) || []
   const sealed = block.sealed as boolean
+  // 终态徽章：进程崩溃(exit≠0)红色 / 正常退出(exit 0)弱化。此前退出码被丢弃，
+  // 崩溃与正常退出视觉上无区别。
+  const exitCode = block.exitCode as number | null | undefined
+  const failed = sealed && exitCode != null && exitCode !== 0
 
   const parsedLines = useMemo(() =>
     lines.map(l => {
@@ -121,8 +124,17 @@ export default function ProcessOutputBlock({ block }: {
     return () => window.removeEventListener('loom-pref-changed', handler)
   }, [])
 
+  // 智能自动滚动：仅在用户未上翻时跟随新输出（与 ShellBlock 同语义）。
+  // 长驻监控进程持续输出时，用户需要能自由上翻阅读早期日志而不被拽回。
+  const userScrolledUp = useRef(false)
+  const handleScroll = useCallback(() => {
+    if (!bodyRef.current) return
+    const el = bodyRef.current
+    userScrolledUp.current = el.scrollHeight - el.scrollTop - el.clientHeight > 40
+  }, [])
+
   useEffect(() => {
-    if (expanded && bodyRef.current) {
+    if (expanded && bodyRef.current && !userScrolledUp.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight
     }
   }, [lines, expanded])
@@ -130,7 +142,7 @@ export default function ProcessOutputBlock({ block }: {
   return (
     <div className={styles.block}>
       <button onClick={() => setExpanded(!expanded)} className={styles.toggle}>
-        <span className={styles.label}>PID:{pid.slice(0, 8)}</span>
+        <span className={`${styles.label} ${failed ? styles.labelFailed : ''}`}>PID:{pid.slice(0, 8)}</span>
         {badge && (
           <span className={styles.detail}>
             {badge.name} · {badge.phase} · 存活 {badge.alive}
@@ -138,9 +150,11 @@ export default function ProcessOutputBlock({ block }: {
         )}
         {!badge && <span className={styles.detail}>{lines.length} lines</span>}
         {!sealed && <span className={styles.dot} />}
+        {failed && <span className={styles.exitBadgeFail}>exit {exitCode}</span>}
+        {!failed && sealed && exitCode === 0 && <span className={styles.exitBadgeOk}>exit 0</span>}
       </button>
       {expanded && (
-        <div ref={bodyRef} className={styles.body}>
+        <div ref={bodyRef} onScroll={handleScroll} className={styles.body}>
           <div className={styles.clawOutput}>
             {parsedLines.map((l, i) =>
               l.parsed

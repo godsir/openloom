@@ -291,8 +291,32 @@ body{
 .toast-exit{animation:fade-in var(--dur-fast) var(--ease-in) reverse}
 
 /* ================================================================
-   REDUCED MOTION
+   FOCUS VISIBLE（键盘可达性兜底）
+   外壳层此前零焦点环，Tab 导航无法定位。给所有可聚焦元素统一焦点环；
+   各组件若有自定义焦点态（outline:none）需自行提供替代样式。
    ================================================================ */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ================================================================
+   REDUCED MOTION
+   尊重系统"减少动态效果"：无限循环动画（呼吸光晕/流光/脉冲等）
+   与过渡一律降级，前庭障碍用户不受困扰。
+   ================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 /* ================================================================
    DRAWER POPOVER

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { ContentBlock } from '../../stores/chat'
 import { IconChevronRight, IconChevronDown, IconSparkles } from '../../utils/icons'
 import { renderMarkdown } from '../../utils/markdown'
@@ -32,9 +32,17 @@ export default function SkillBlock({ block }: { block: ContentBlock }) {
     || ''
   const renderedHtml = content ? sanitizeHtml(renderMarkdown(content)) : ''
 
-  // Auto-scroll when streaming
+  // Auto-scroll when streaming.
+  // 智能跟随：用户上翻时不再被拽回（与 ShellBlock 同语义）。
+  const userScrolledUp = useRef(false)
+  const handleScroll = useCallback(() => {
+    if (!bodyRef.current) return
+    const el = bodyRef.current
+    userScrolledUp.current = el.scrollHeight - el.scrollTop - el.clientHeight > 40
+  }, [])
+
   useEffect(() => {
-    if (expanded && bodyRef.current) {
+    if (expanded && bodyRef.current && !userScrolledUp.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight
     }
   }, [content, expanded])
@@ -56,7 +64,7 @@ export default function SkillBlock({ block }: { block: ContentBlock }) {
         {!sealed && <span className={styles.dot} />}
       </button>
       {expanded && (
-        <div ref={bodyRef} className={styles.body}>
+        <div ref={bodyRef} onScroll={handleScroll} className={styles.body}>
           {status === 'running' && !content && (
             <span className={styles.loading}>Loading skill...</span>
           )}

@@ -56,7 +56,7 @@ export default function SubagentCard({ block }: { block: ContentBlock }) {
         <span>
           {status === 'done'
             ? <IconCheck size={11} className={styles.iconGreen} />
-            : <IconLoader size={11} className={styles.iconAmber} />
+            : <IconLoader size={11} className={`${styles.iconAmber} ${styles.spin}`} />
           }
         </span>
         <IconChevronDown

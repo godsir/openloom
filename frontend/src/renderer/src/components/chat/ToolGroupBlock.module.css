@@ -37,6 +37,28 @@
   flex-shrink: 0;
 }
 
+/* 工具终态三态着色：完成=绿、运行中=主色旋转、失败=红（修复"失败与成功同色"） */
+.statusDone {
+  color: var(--green);
+  flex-shrink: 0;
+}
+
+.statusRunning {
+  color: var(--accent);
+  flex-shrink: 0;
+  animation: toolGroupSpin 1s linear infinite;
+}
+
+.statusError {
+  color: var(--red);
+  flex-shrink: 0;
+}
+
+@keyframes toolGroupSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .toolName {
   font-weight: 500;
   color: var(--text-light, var(--text-secondary));

@@ -39,6 +39,19 @@
   }
 }
 
+/* 退场动画：此前 toast 到期直接卸载（硬切），下方 toast 瞬移补位。
+   现在先播 180ms 退场再卸载。 */
+.toastExiting {
+  animation: toast-exit 0.18s ease-in forwards;
+}
+
+@keyframes toast-exit {
+  to {
+    opacity: 0;
+    transform: translateX(24px) scale(0.96);
+  }
+}
+
 /* ─── Type variants ─── */
 
 .info {
@@ -189,7 +202,17 @@
 
 .progressBar {
   height: 100%;
+  width: 100%;
   border-radius: 0 1px 1px 0;
+  /* 用 CSS 动画（而非内联 transition）以便悬停时 animation-play-state 暂停 */
+  animation-name: toast-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes toast-progress {
+  from { width: 100%; }
+  to { width: 0%; }
 }
 
 .info .progressBar  { background: rgba(34, 211, 238, 0.5); }

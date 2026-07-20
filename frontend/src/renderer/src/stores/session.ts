@@ -512,9 +512,12 @@ export function parseContentParts(content: any, sessionId: string, port: number)
             blocks.push({
               type: 'shell',
               toolName,
-              status: success ? 'done' : 'done',
+              status: 'done',
               args: { command: '' },
               result: resultText,
+              // legacy 格式只有 success 布尔，映射为 exit_code 供 ShellBlock
+              // 显示红(失败)/绿(成功)终态，避免历史里的失败命令与成功同貌。
+              details: { exit_code: success ? 0 : 1 },
               sealed: true,
             })
           }

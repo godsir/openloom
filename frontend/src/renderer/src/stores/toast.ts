@@ -19,7 +19,7 @@ export interface ToastSlice {
 
 const MAX_TOASTS = 8
 
-export const createToastSlice: StateCreator<ToastSlice> = (set, get) => ({
+export const createToastSlice: StateCreator<ToastSlice> = (set) => ({
   toasts: [],
   addToast: (toast) => {
     const id = crypto.randomUUID()
@@ -29,12 +29,8 @@ export const createToastSlice: StateCreator<ToastSlice> = (set, get) => ({
       if (next.length > MAX_TOASTS) next.splice(0, next.length - MAX_TOASTS)
       return { toasts: next }
     })
-    const duration = toast.duration ?? 4000
-    if (duration > 0) {
-      setTimeout(() => {
-        get().removeToast(id)
-      }, duration)
-    }
+    // 自动消失计时器由 ToastItem 组件管理（支持悬停暂停 + 退场动画），
+    // store 不再自行 setTimeout。
   },
   removeToast: (id) => {
     set((s: any) => ({ toasts: s.toasts.filter((t: Toast) => t.id !== id) }))

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useLocale } from '../../i18n'
 import type { ContentBlock } from '../../stores/chat'
-import { IconChevronRight, IconChevronDown, IconTerminal, IconSearch, IconGlobe, IconFile, IconFileText, IconEdit, IconTrash, IconFolder } from '../../utils/icons'
+import { IconChevronRight, IconChevronDown, IconTerminal, IconSearch, IconGlobe, IconFile, IconFileText, IconEdit, IconTrash, IconFolder, IconCheck, IconXCircle } from '../../utils/icons'
 import { FileDiffCard } from './FileDiffCard'
 import styles from './ShellBlock.module.css'
 
@@ -144,6 +144,14 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
 
   const { label, detail } = formatTool(toolName, args)
 
+  // 终态标识：shell 类工具的 structured_content 携带 exit_code（非 0 即失败）。
+  // 此前成功与失败在折叠行上零区别，用户只能展开读 stderr 才知道结果——
+  // 现在折叠行直接给出 红叉(失败) / 绿勾(成功) 终态。
+  const exitCode = details && typeof details.exit_code === 'number'
+    ? (details.exit_code as number)
+    : undefined
+  const failed = sealed && exitCode !== undefined && exitCode !== 0
+
   // Smart auto-scroll: only follow output when user is at the bottom
   const handleScroll = useCallback(() => {
     if (!bodyRef.current) return
@@ -178,9 +186,11 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
       >
         {expanded ? <IconChevronDown size={10} /> : <IconChevronRight size={10} />}
         <ToolIcon name={toolName} />
-        <span className={styles.label}>{label}</span>
+        <span className={`${styles.label} ${failed ? styles.labelFailed : ''}`}>{label}</span>
         <span className={styles.detail}>{truncate(detail, 120)}</span>
         {!sealed && <span className={styles.dot} />}
+        {failed && <IconXCircle size={11} className={styles.failIcon} />}
+        {!failed && sealed && exitCode === 0 && <IconCheck size={11} className={styles.okIcon} />}
       </button>
       {expanded && (
         <div ref={bodyRef} className={styles.body} onScroll={handleScroll}>
