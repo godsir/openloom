@@ -1,5 +1,6 @@
 import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
+import { t as _t } from '../i18n'
 import type { KgNode, KgEdge, KgGraph, KgStats, Cognition, CognitionHistory, MemoryHealth, MemoryQualityReport, PersonaData, SessionPatternReport, ConsolidationReport, ForgettingReport, PipelineStatus, LayerStats } from '../types/bindings'
 
 export interface KgSlice {
@@ -72,8 +73,14 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   activeTab: 'graph',
 
   kgSearch: async (query) => {
-    const result = await loomRpc<{ rows: KgNode[] }>('kg.search', { query, limit: 20 })
-    set({ kgSearchResults: result.rows ?? [] })
+    try {
+      const result = await loomRpc<{ rows: KgNode[] }>('kg.search', { query, limit: 20 })
+      set({ kgSearchResults: result.rows ?? [] })
+    } catch (err) {
+      // 失败时给出可见反馈，而非静默显示空结果误导用户（B8）
+      console.error('[kgSearch] failed:', err)
+      ;(get() as any).addToast?.({ type: 'error', message: _t('kg.searchFailed') })
+    }
   },
 
   kgExpandNode: async (nodeName, scope?) => {
@@ -245,15 +252,25 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   },
 
   kgLoadStats: async () => {
-    const result = await loomRpc<KgStats>('kg.stats')
-    set({ kgStats: result })
+    try {
+      const result = await loomRpc<KgStats>('kg.stats')
+      set({ kgStats: result })
+    } catch (err) {
+      console.error('[kgLoadStats] failed:', err)
+      ;(get() as any).addToast?.({ type: 'error', message: _t('kg.loadFailed') })
+    }
   },
 
   kgClearGraph: () => set({ kgGraph: null, kgSelectedNode: null }),
 
   kgListNodes: async (scope) => {
-    const result = await loomRpc<{ nodes: KgNode[] }>('kg.list', { limit: 50, scope })
-    set({ kgNodeList: result.nodes ?? [] })
+    try {
+      const result = await loomRpc<{ nodes: KgNode[] }>('kg.list', { limit: 50, scope })
+      set({ kgNodeList: result.nodes ?? [] })
+    } catch (err) {
+      console.error('[kgListNodes] failed:', err)
+      ;(get() as any).addToast?.({ type: 'error', message: _t('kg.loadFailed') })
+    }
   },
 
   kgNodeDelete: async (name) => {

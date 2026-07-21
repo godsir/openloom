@@ -36,7 +36,13 @@ export const createSelectionContextSlice: StateCreator<SelectionContextSlice> = 
 
   addQuotedSelection: (sel) => {
     const id = crypto.randomUUID()
-    set(s => ({ quotedSelections: [...s.quotedSelections, { ...sel, id }] }))
+    set(s => {
+      // 去重：同一段文本+文件已引用过就不再重复添加（否则会堆出 N 张相同卡片）
+      const dup = s.quotedSelections.some(
+        q => q.text === sel.text && q.filePath === sel.filePath)
+      if (dup) return {}
+      return { quotedSelections: [...s.quotedSelections, { ...sel, id }] }
+    })
   },
 
   removeQuotedSelection: (id) => {

@@ -126,7 +126,8 @@ export default function CronTab() {
   const openCreate = () => setDialog({ open: true, name: '', cron_expression: '', prompt: '', timeout_secs: 300, model: currentModel || '' })
   const openEdit = (job: CronJobSummary) => setDialog({
     open: true, editJob: job,
-    name: job.name, cron_expression: job.cron_expression, prompt: job.prompt, timeout_secs: 300, model: currentModel || '',
+    name: job.name, cron_expression: job.cron_expression, prompt: job.prompt,
+    timeout_secs: 300, model: job.model || currentModel || '',
   })
   const closeDialog = () => { setDialog(d => ({ ...d, open: false })); setDialogErr(null) }
 
@@ -147,7 +148,11 @@ export default function CronTab() {
     if (!prompt) { setDialogErr(t('cron.promptRequired')); return }
     setSaving(true)
     try {
-      const params = { name, cron_expression: expr, prompt, session_mode: 'isolated', timeout_secs: Math.max(1, Math.min(3600, dialog.timeout_secs)) }
+      // model 一并提交，避免用户选择的模型被丢弃（A3）。
+      // 注：后端当前尚未按任务持久化/应用 model，此为前端侧不丢参，后端支持后自动生效。
+      const model = (dialog.model || currentModel || '').trim()
+      const params: Record<string, unknown> = { name, cron_expression: expr, prompt, session_mode: 'isolated', timeout_secs: Math.max(1, Math.min(3600, dialog.timeout_secs)) }
+      if (model) params.model = model
       if (dialog.editJob) {
         await loomRpc('cron.update', { id: dialog.editJob.id, ...params })
       } else {

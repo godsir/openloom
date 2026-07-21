@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { IconChevronDown, IconCheck } from '../../utils/icons'
+import { useMenuKeyboard, useClickOutside } from './menu-hooks'
 import styles from './Select.module.css'
 
 export interface SelectOption<T extends string = string> {
@@ -21,6 +22,13 @@ interface SelectProps<T extends string> {
   variant?: 'form' | 'pill'
   disabled?: boolean
   menuWidth?: number
+  /** 无选项时展示的空态文案（不传则不渲染空态） */
+  emptyText?: string
+  /** 选项加载中（展示加载态，优先于空态） */
+  loading?: boolean
+  loadingText?: string
+  /** 无障碍标签（触发器 aria-label） */
+  ariaLabel?: string
 }
 
 const ITEM_HEIGHT = 34
@@ -38,11 +46,19 @@ export default function Select<T extends string = string>({
   variant = 'form',
   disabled,
   menuWidth,
+  emptyText,
+  loading,
+  loadingText,
+  ariaLabel,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([])
   const [menuPos, setMenuPos] = useState<React.CSSProperties>({})
+  // 键盘高亮项（指向 options 数组下标，与分组头无关）
+  const [activeIndex, setActiveIndex] = useState(0)
+  const menuIdRef = useRef(`select-menu-${Math.random().toString(36).slice(2, 8)}`)
   const selected = options.find((o) => o.value === value)
   const label = selected?.label ?? placeholder ?? ''
   const selectedAvatar = selected?.avatar ?? null
@@ -100,26 +116,53 @@ export default function Select<T extends string = string>({
     setMenuPos(pos)
   }, [options.length, groupHeaders.length, menuWidth])
 
+  // 打开时定位，并把键盘高亮复位到当前选中项
   useEffect(() => {
     if (open) {
       updatePosition()
-      const handler = (e: MouseEvent) => {
-        const target = e.target as Node
-        if (triggerRef.current?.contains(target)) return
-        if (menuRef.current?.contains(target)) return
-        setOpen(false)
-      }
-      const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
-      return () => {
-        clearTimeout(timer)
-        document.removeEventListener('mousedown', handler)
-      }
+      const idx = options.findIndex((o) => o.value === value)
+      setActiveIndex(idx >= 0 ? idx : 0)
     }
   }, [open, updatePosition])
+
+  // 点击外部关闭（统一 hook，取代原先各弹层各写一套的 mousedown + setTimeout）
+  useClickOutside(
+    (target) =>
+      !!triggerRef.current?.contains(target) || !!menuRef.current?.contains(target),
+    () => setOpen(false),
+    open,
+  )
+
+  const selectIndex = useCallback(
+    (i: number) => {
+      const opt = options[i]
+      if (!opt) return
+      onChange(opt.value)
+      setOpen(false)
+    },
+    [options, onChange],
+  )
+
+  // 键盘导航：↑/↓ 循环、Enter 选中、Esc 关闭
+  useMenuKeyboard({
+    open: open && options.length > 0,
+    itemCount: options.length,
+    activeIndex,
+    setActiveIndex,
+    onSelect: selectIndex,
+    onClose: () => setOpen(false),
+  })
+
+  // 键盘移动高亮时，把对应项滚入可视区
+  useEffect(() => {
+    if (!open) return
+    itemRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [open, activeIndex])
 
   const isPill = variant === 'pill'
   const triggerClass = [
     isPill ? styles.triggerPill : styles.trigger,
+    open ? styles.triggerOpen : '',
     className,
   ].filter(Boolean).join(' ')
 
@@ -133,6 +176,10 @@ export default function Select<T extends string = string>({
         onClick={() => !disabled && setOpen(!open)}
         className={triggerClass}
         disabled={disabled}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? menuIdRef.current : undefined}
       >
         {isPill && selectedAvatar ? (
           <span className={styles.triggerAvatar}>
@@ -144,43 +191,69 @@ export default function Select<T extends string = string>({
           </span>
         ) : null}
         <span className={`${styles.label} ${value ? '' : styles.placeholder}`} style={selected?.fontFamily ? { fontFamily: selected.fontFamily } : undefined}>{label}</span>
-        <IconChevronDown size={isPill ? 8 : 12} />
+        <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`}>
+          <IconChevronDown size={isPill ? 8 : 12} />
+        </span>
       </button>
       {open &&
         createPortal(
-          <div ref={menuRef} style={menuPos} className={styles.menu}>
-            {options.map((opt) => {
-              const showHeader = opt.group && opt.group !== lastGroup
-              if (showHeader) lastGroup = opt.group!
-              const headerEl = showHeader ? (
-                <div key={`h-${opt.group}`} className={styles.groupHeader}>
-                  {opt.group}
-                </div>
+          <div
+            ref={menuRef}
+            id={menuIdRef.current}
+            role="listbox"
+            aria-label={ariaLabel}
+            style={menuPos}
+            className={styles.menu}
+          >
+            {loading ? (
+              <div className={styles.menuEmpty}>
+                <span className={styles.menuSpinner} aria-hidden="true" />
+                {loadingText ?? '…'}
+              </div>
+            ) : options.length === 0 ? (
+              emptyText ? (
+                <div className={styles.menuEmpty}>{emptyText}</div>
               ) : null
-              const itemStyle = opt.fontFamily ? { fontFamily: opt.fontFamily } : undefined
-              const itemEl = (
-                <div
-                  key={opt.value}
-                  onClick={() => {
-                    onChange(opt.value)
-                    setOpen(false)
-                  }}
-                  className={`${styles.item} ${opt.value === value ? styles.itemActive : ''}`}
-                  style={itemStyle}
-                >
-                  {opt.avatar ? (
-                    opt.avatar.startsWith('data:') ? (
-                      <img src={opt.avatar} alt="" className={styles.itemAvatar} />
-                    ) : (
-                      <span className={styles.itemAvatarLetter}>{opt.label[0]?.toUpperCase() || '?'}</span>
-                    )
-                  ) : null}
-                  <span className={styles.itemLabel} title={opt.label}>{opt.label}</span>
-                  {opt.value === value && <IconCheck size={12} className={styles.check} />}
-                </div>
-              )
-              return showHeader ? [headerEl, itemEl] : itemEl
-            })}
+            ) : (
+              options.map((opt, i) => {
+                const showHeader = opt.group && opt.group !== lastGroup
+                if (showHeader) lastGroup = opt.group!
+                const headerEl = showHeader ? (
+                  <div key={`h-${opt.group}`} className={styles.groupHeader}>
+                    {opt.group}
+                  </div>
+                ) : null
+                const itemStyle = opt.fontFamily ? { fontFamily: opt.fontFamily } : undefined
+                const isActive = i === activeIndex
+                const itemEl = (
+                  <div
+                    key={opt.value}
+                    ref={(el) => { itemRefs.current[i] = el }}
+                    role="option"
+                    aria-selected={opt.value === value}
+                    onMouseEnter={() => setActiveIndex(i)}
+                    onClick={() => selectIndex(i)}
+                    className={[
+                      styles.item,
+                      opt.value === value ? styles.itemActive : '',
+                      isActive && opt.value !== value ? styles.itemHighlight : '',
+                    ].filter(Boolean).join(' ')}
+                    style={itemStyle}
+                  >
+                    {opt.avatar ? (
+                      opt.avatar.startsWith('data:') ? (
+                        <img src={opt.avatar} alt="" className={styles.itemAvatar} />
+                      ) : (
+                        <span className={styles.itemAvatarLetter}>{opt.label[0]?.toUpperCase() || '?'}</span>
+                      )
+                    ) : null}
+                    <span className={styles.itemLabel} title={opt.label}>{opt.label}</span>
+                    {opt.value === value && <IconCheck size={12} className={styles.check} />}
+                  </div>
+                )
+                return showHeader ? [headerEl, itemEl] : itemEl
+              })
+            )}
           </div>,
           document.body,
         )}

@@ -15,12 +15,17 @@ export default function ImConnectivityTest({ platform, instanceId, onClose }: Pr
   const { testConnectivity } = useIMStore()
   const [result, setResult] = useState<ConnectivityResult | null>(null)
   const [running, setRunning] = useState(false)
+  const [testError, setTestError] = useState<string | null>(null)
 
   const runTest = async () => {
     setRunning(true)
+    setTestError(null)
     try {
       const res = await testConnectivity(platform, instanceId)
       setResult(res)
+    } catch (e: any) {
+      // 检测本身失败（RPC 异常等）时给出可见反馈与重试，而非空白弹窗（A9）
+      setTestError(e?.message || String(e))
     } finally {
       setRunning(false)
     }
@@ -66,6 +71,15 @@ export default function ImConnectivityTest({ platform, instanceId, onClose }: Pr
         </div>
         <div className={styles.modalBody}>
           {running && <p className={styles.loading}>{t('im.testRunning')}</p>}
+
+          {!running && testError && (
+            <div className={styles.testErrorBox}>
+              <p className={styles.statError}>{t('im.testFailed')}: {testError}</p>
+              <button className={styles.instanceBtn} onClick={runTest}>
+                {t('common.retry')}
+              </button>
+            </div>
+          )}
 
           {result && (
             <>

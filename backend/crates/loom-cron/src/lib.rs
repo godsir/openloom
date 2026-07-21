@@ -56,10 +56,12 @@ pub trait CronEventPublisher: Send + Sync {
 pub trait PromptExecutor: Send + Sync {
     /// Execute a prompt and return the AI's response.
     /// Returns an error if no AI backend is available or the request fails.
+    /// `model` optionally overrides the active model for this execution.
     fn execute(
         &self,
         prompt: &str,
         timeout_secs: u64,
+        model: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>>;
 }
 
@@ -256,6 +258,7 @@ impl CronScheduler {
         prompt: &str,
         session_mode: SessionMode,
         timeout_secs: u64,
+        model: Option<String>,
     ) -> Result<String> {
         // Validate timeout bounds.
         if timeout_secs == 0 {
@@ -288,6 +291,7 @@ impl CronScheduler {
             enabled: true,
             session_mode,
             timeout_secs,
+            model,
             created_at,
             last_run: None,
             next_run,
@@ -322,6 +326,7 @@ impl CronScheduler {
         prompt: &str,
         session_mode: SessionMode,
         timeout_secs: u64,
+        model: Option<String>,
     ) -> Result<()> {
         // Validate timeout bounds.
         if timeout_secs == 0 {
@@ -343,6 +348,7 @@ impl CronScheduler {
             prompt,
             &session_mode,
             timeout_secs,
+            &model,
         )?;
 
         // Re-register or remove from active set based on the updated job's enabled state.
@@ -616,7 +622,7 @@ impl CronScheduler {
         tracing::info!(run_id = %run_id, job_id = %job.id, name = %job.name, "cron job triggered");
 
         let result = match executor {
-            Some(exec) => exec.execute(&job.prompt, job.timeout_secs).await,
+            Some(exec) => exec.execute(&job.prompt, job.timeout_secs, job.model.as_deref()).await,
             None => {
                 tracing::error!(
                     run_id = %run_id,
@@ -728,6 +734,7 @@ mod tests {
             &self,
             prompt: &str,
             _timeout_secs: u64,
+            _model: Option<&str>,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>> {
             let result = Ok(format!("[AI response to: {}]", prompt));
             Box::pin(std::future::ready(result))
@@ -766,6 +773,7 @@ mod tests {
                 "帮我检查系统状态",
                 SessionMode::Isolated,
                 300,
+                None,
             )
             .await
             .unwrap();
@@ -792,6 +800,7 @@ mod tests {
                 "do something",
                 SessionMode::Isolated,
                 300,
+                None,
             )
             .await;
         assert!(result.is_err());
@@ -810,6 +819,7 @@ mod tests {
                 "check status",
                 SessionMode::Isolated,
                 300,
+                None,
             )
             .await
             .unwrap();
@@ -836,6 +846,7 @@ mod tests {
                 "原始指令",
                 SessionMode::Isolated,
                 300,
+                None,
             )
             .await
             .unwrap();
@@ -848,6 +859,7 @@ mod tests {
                 "更新后的指令",
                 SessionMode::Current,
                 600,
+                None,
             )
             .await
             .unwrap();
@@ -873,6 +885,7 @@ mod tests {
                 "do cleanup",
                 SessionMode::Isolated,
                 300,
+                None,
             )
             .await
             .unwrap();
@@ -896,6 +909,7 @@ mod tests {
                 "检查天气",
                 SessionMode::Isolated,
                 5,
+                None,
             )
             .await
             .unwrap();
@@ -933,6 +947,7 @@ mod tests {
                 "检查天气",
                 SessionMode::Isolated,
                 5,
+                None,
             )
             .await
             .unwrap();
@@ -961,6 +976,7 @@ mod tests {
                     "每日报告",
                     SessionMode::Isolated,
                     300,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1004,6 +1020,7 @@ mod tests {
                 "do thing",
                 SessionMode::Isolated,
                 300,
+                None,
             )
             .await
             .unwrap();
@@ -1035,6 +1052,7 @@ mod tests {
                     "report",
                     SessionMode::Isolated,
                     300,
+                    None,
                 )
                 .await
                 .unwrap()
@@ -1075,6 +1093,7 @@ mod tests {
             enabled: true,
             session_mode: SessionMode::Isolated,
             timeout_secs: 5,
+            model: None,
             created_at: now.timestamp(),
             last_run: None,
             next_run: next_fire.map(|t| t.timestamp()),

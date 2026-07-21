@@ -1,6 +1,7 @@
 import type { Platform } from '../../stores/im'
 import PlatformIcon from '../shared/PlatformIcon'
-import styles from '../input/InputArea.module.css'
+import wrapperStyles from '../input/InputArea.module.css'
+import styles from './ImSessionNotice.module.css'
 
 const PLATFORM_LABELS: Record<Platform, string> = {
   telegram: 'Telegram',
@@ -23,15 +24,15 @@ export default function ImSessionNotice({ platform, t }: Props) {
   const label = PLATFORM_LABELS[platform] ?? platform
 
   return (
-    <div className={styles.wrapper}>
-      <div className={styles.container} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 0', gap: 12 }}>
-        <PlatformIcon platform={platform} size={32} />
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>
-            {t('im.sessionNoticeTitle', '此会话来自 {platform}').replace('{platform}', label)}
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {t('im.sessionNoticeBody', '请在 {platform} 中继续对话').replace('{platform}', label)}
+    <div className={wrapperStyles.wrapper}>
+      <div className={wrapperStyles.container}>
+        {/* 独立 module 样式 + 入场过渡；i18n 走正确的 vars 占位（此前把字符串
+            当 vars 传入，兜底逻辑实际失效） */}
+        <div className={styles.notice}>
+          <PlatformIcon platform={platform} size={32} />
+          <div>
+            <div className={styles.title}>{t('im.sessionNoticeTitle', { platform: label })}</div>
+            <div className={styles.body}>{t('im.sessionNoticeBody', { platform: label })}</div>
           </div>
         </div>
       </div>

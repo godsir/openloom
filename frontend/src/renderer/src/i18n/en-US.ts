@@ -4,6 +4,7 @@ export const enUS: TranslationMap = {
   // ── Common ──────────────────────────────────────────────────────
   'common.save': 'Save',
   'common.cancel': 'Cancel',
+  'common.removeQuote': 'Remove quote',
   'common.delete': 'Delete',
   'common.confirm': 'Confirm',
   'common.close': 'Close',
@@ -50,6 +51,11 @@ export const enUS: TranslationMap = {
   'common.imageHint': 'Scroll to zoom · Drag to pan · Double-click reset · Esc to close',
   'common.copyImage': 'Copy Image',
   'common.saveImage': 'Save Image',
+  'common.imageCopied': 'Image copied',
+  'common.imageUrlCopied': 'Image link copied',
+  'common.imageLoading': 'Loading image…',
+  'common.prevImage': 'Previous',
+  'common.nextImage': 'Next',
   'common.openFile': 'Open File',
   'common.clickToLoadImage': 'Click to load remote image',
 
@@ -100,6 +106,7 @@ export const enUS: TranslationMap = {
   'island.configSaved': 'Settings saved',
   'island.extracting': 'Extracting memories',
   'island.extractingHint': 'Extracting knowledge from conversation',
+  'island.andMore': '...and {n} more',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': 'Sessions',
@@ -199,8 +206,10 @@ export const enUS: TranslationMap = {
 
   // ── Plan & Todo ──────────────────────────────────────────────────
   'todo.panelTitle': 'Todo',
+  'todo.count': '{n} items',
   'todo.empty': 'No todos yet',
   'todo.emptyHint': 'Create a plan with /plan in chat and AI will generate tasks automatically',
+  'todo.toggleFailed': 'Failed to update todo status',
   'todo.pending': 'Pending',
   'todo.inProgress': 'In Progress',
   'todo.completed': 'Completed',
@@ -208,6 +217,19 @@ export const enUS: TranslationMap = {
   'todo.markPending': 'Mark as Pending',
   'todo.markInProgress': 'Mark as In Progress',
   'todo.markCompleted': 'Mark as Completed',
+
+  // ── Plan Panel ───────────────────────────────────────────────────
+  'plan.title': 'Plan',
+  'plan.empty': 'No plans yet',
+  'plan.emptyHint': 'Type /plan your idea in chat to create a plan',
+  'plan.selectPlan': 'Select a plan:',
+  'plan.placeholder': 'Plan content will appear here...',
+  'plan.saveFailed': 'Failed to save plan',
+  'plan.status.drafting': 'Drafting',
+  'plan.status.ready': 'Ready',
+  'plan.status.building': 'Building',
+  'plan.status.completed': 'Completed',
+  'plan.status.error': 'Error',
 
   // ── Slash Commands ────────────────────────────────────────────────
   'slash.builtinCommands': 'Built-in Commands',
@@ -253,6 +275,9 @@ export const enUS: TranslationMap = {
   'input.sessionCacheHit': 'Session cache hits',
   'input.sessionCost': 'Session total cost',
   'input.model': 'Model',
+  'model.loadFailed': 'Failed to load model list',
+  'model.switchFailed': 'Failed to switch model',
+  'model.empty': 'No models available',
   'input.noMatchingFiles': 'No matching files',
   'input.searchFiles': 'Type filename to search...',
   'input.explainCode': 'Explain this code...',
@@ -277,6 +302,7 @@ export const enUS: TranslationMap = {
   'input.thinkingTitle': 'Thinking: {level}',
 
   // ── Entity Selector ──────────────────────────────────────────────
+  'entity.selectorLabel': 'Choose executor (current: {name})',
   'entity.agentTab': 'Agent',
   'entity.teamTab': 'Teams',
   'entity.noAgents': 'No agent configs',
@@ -451,6 +477,10 @@ export const enUS: TranslationMap = {
   'kg.exitFullscreen': 'Exit Fullscreen',
   'kg.refreshGraph': 'Refresh Graph',
   'kg.emptyEntityList': 'No entities yet. The knowledge graph builds automatically as you chat with AI.',
+  'kg.searchFailed': 'Knowledge graph search failed',
+  'kg.loadFailed': 'Knowledge graph failed to load',
+  'kg.noSearchMatch': 'No matching entities found',
+  'kg.deleteRelationConfirm': 'Delete the relation between "{source}" and "{target}"?',
   'kg.confidence': 'Confidence',
   'kg.confidenceTooltip': "AI's confidence level about this entity",
   'kg.viewRelated': 'View Related',
@@ -843,6 +873,8 @@ export const enUS: TranslationMap = {
   'write.exportHTML': 'Export HTML',
   'write.exportPDF': 'Export PDF',
   'write.exportDOCX': 'Export DOCX',
+  'write.exportedOk': '{format} exported',
+  'write.exportFailed': 'Export failed',
   'write.settingsDefaultPreviewDesc': 'Select the default preview mode. WYSIWYG is suitable for writing, while Live is suitable for code.',
   'write.settingsAutoSaveIntervalDesc': 'After enabling auto-save, the AI writing assistant will periodically save your progress to prevent data loss. It is recommended to set it to 900 ms (9 seconds) or longer to balance performance and data security.',
 
@@ -917,6 +949,8 @@ export const enUS: TranslationMap = {
   // ── Updates ─────────────────────────────────────────────────────
   'updates.checkFailed': 'Update check failed',
   'updates.downloadFailed': 'Download failed',
+  'updates.cancelDownload': 'Cancel Download',
+  'updates.backgroundStarted': 'Background download started — progress shown in Dynamic Island',
 
   // ── Pet / Tray ──────────────────────────────────────────────────
   'pet.leaving': 'Bye!',
@@ -1653,6 +1687,8 @@ export const enUS: TranslationMap = {
   'software.resetToDefault': 'Reset to Default',
   'software.resetToDefaultDesc': 'Restore font size, UI font and code font to defaults',
   'software.resetComplete': 'Font size reset to default',
+  'software.resetConfirmTitle': 'Reset to defaults',
+  'software.resetConfirmMessage': 'This will reset font size, UI font, code font and zoom level to their defaults. Continue?',
 
   // ── Token Tab ───────────────────────────────────────────────────
   'token.title': 'Token Usage',
@@ -1778,6 +1814,7 @@ export const enUS: TranslationMap = {
   'im.wechatConfigHint': 'WeChat connects via QR code; no manual credentials needed',
   'im.connectTestTitle': 'Connection Test',
   'im.testRunning': 'Testing...',
+  'im.testFailed': 'Connectivity test failed',
   'im.verdictPass': 'Connection OK',
   'im.verdictWarn': 'Needs attention',
   'im.verdictFail': 'Connection failed',
@@ -1886,6 +1923,7 @@ Fill in App Key and App Secret above and click "Connect"`,
   'review.uncommitted': 'Uncommitted Changes',
   'review.noChanges': 'No uncommitted changes.',
   'review.loading': 'Loading git diff...',
+  'review.startFailed': 'Failed to start review',
   'review.findings': 'Findings',
   'review.noFindings': 'No review findings yet.',
   'review.modified': 'Modified',

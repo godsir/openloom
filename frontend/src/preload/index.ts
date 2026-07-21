@@ -18,6 +18,7 @@ export interface LoomApi {
   setPreference: (key: string, value: unknown) => Promise<void>
   checkForUpdates: () => Promise<void>
   downloadUpdate: () => Promise<void>
+  cancelDownloadUpdate: () => Promise<void>
   refreshUpdaterProxy: () => Promise<void>
   installUpdate: () => void
   getUpdateChannel: () => Promise<string>
@@ -26,6 +27,7 @@ export interface LoomApi {
   onUpdateNotAvailable: (cb: () => void) => () => void
   onUpdateDownloadProgress: (cb: (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => () => void
   onUpdateDownloaded: (cb: () => void) => () => void
+  onUpdateDownloadCancelled: (cb: () => void) => () => void
   onUpdateError: (cb: (msg: string) => void) => () => void
   getLoomDir: () => Promise<string>
   togglePet: (on: boolean) => Promise<boolean>
@@ -138,6 +140,7 @@ contextBridge.exposeInMainWorld('loom', {
   setPreference: (key: string, value: unknown) => ipcRenderer.invoke('set-preference', key, value),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  cancelDownloadUpdate: () => ipcRenderer.invoke('cancel-download-update'),
   refreshUpdaterProxy: () => ipcRenderer.invoke('refresh-updater-proxy'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   getUpdateChannel: () => ipcRenderer.invoke('get-update-channel'),
@@ -161,6 +164,11 @@ contextBridge.exposeInMainWorld('loom', {
     const fn = (): void => cb()
     ipcRenderer.on('update-downloaded', fn)
     return () => { ipcRenderer.removeListener('update-downloaded', fn) }
+  },
+  onUpdateDownloadCancelled: (cb: () => void) => {
+    const fn = (): void => cb()
+    ipcRenderer.on('update-download-cancelled', fn)
+    return () => { ipcRenderer.removeListener('update-download-cancelled', fn) }
   },
   onUpdateError: (cb: (msg: string) => void) => {
     const fn = (_e: unknown, msg: string): void => cb(msg)

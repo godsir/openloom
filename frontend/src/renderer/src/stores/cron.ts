@@ -9,6 +9,8 @@ export interface CronJobSummary {
   prompt: string
   enabled: boolean
   session_mode: 'isolated' | 'current'
+  /** 每任务模型覆盖（缺省 = 当前激活模型） */
+  model?: string
   last_run: number | null
   next_run: number | null
   run_count: number

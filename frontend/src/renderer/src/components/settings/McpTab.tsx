@@ -247,7 +247,15 @@ function McpTab() {
             </button>
           )}
         </div>
-        {error && <p className={styles.toolsError}>{error}</p>}
+        {error && (
+          <p className={styles.toolsError}>
+            {error}
+            {/* 加载失败给出重试入口，而非只有一句报错（A8） */}
+            <button className={styles.mcpRetryBtn} onClick={loadData}>
+              {t('common.retry')}
+            </button>
+          </p>
+        )}
         {loading ? (
           <p className={styles.toolsEmpty}>{t('common.loading')}</p>
         ) : (
@@ -279,18 +287,18 @@ function McpTab() {
                         </div>
                         <div className={styles.mcpServerActions}>
                           {c.connected ? (
-                            <button className={styles.mcpDisconnectBtn} onClick={() => handleDisconnect(c.name)}>
+                            <button className={styles.mcpDisconnectBtn} disabled={busy} onClick={() => handleDisconnect(c.name)}>
                               {t('mcp.disconnect')}
                             </button>
                           ) : (
-                            <button className={styles.mcpDisconnectBtn} onClick={() => handleConnectExisting(c)}>
+                            <button className={styles.mcpDisconnectBtn} disabled={busy} onClick={() => handleConnectExisting(c)}>
                               {t('mcp.connect')}
                             </button>
                           )}
-                          <button className={styles.mcpDisconnectBtn} onClick={() => startEdit(c)}>
+                          <button className={styles.mcpDisconnectBtn} disabled={busy} onClick={() => startEdit(c)}>
                             {t('common.edit')}
                           </button>
-                          <button className={styles.mcpDisconnectBtn} onClick={() => handleDelete(c.name)}>
+                          <button className={styles.mcpDisconnectBtn} disabled={busy} onClick={() => handleDelete(c.name)}>
                             {t('common.delete')}
                           </button>
                         </div>

@@ -23,6 +23,23 @@
   pointer-events: none;
 }
 
+/* 菜单打开时：触发器保持强调边框，给出明确的"已展开"反馈 */
+.triggerOpen {
+  border-color: var(--border-accent);
+  background: var(--bg-active);
+}
+
+/* 下拉箭头：随开合旋转 */
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
 .triggerPill {
   display: inline-flex;
   align-items: center;
@@ -49,6 +66,12 @@
   pointer-events: none;
 }
 
+.triggerPill.triggerOpen {
+  background: var(--bg-active);
+  color: var(--text);
+  border-color: var(--border-accent);
+}
+
 .label {
   max-width: 120px;
   overflow: hidden;
@@ -67,6 +90,13 @@
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   padding: 4px 0;
+  /* 弹层入场：轻微下移淡入，配合触发器箭头旋转给出"展开"质感 */
+  animation: menuIn var(--dur-fast) var(--ease-out);
+}
+
+@keyframes menuIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .groupHeader {
@@ -95,9 +125,39 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* 键盘高亮项（↑/↓ 移动时）：与 hover 同款底色 */
+.itemHighlight {
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .itemActive {
   color: var(--accent);
   background: var(--accent-subtle);
+}
+
+/* 空态 / 加载态 */
+.menuEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.menuSpinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: selectSpin 0.7s linear infinite;
+}
+
+@keyframes selectSpin {
+  to { transform: rotate(360deg); }
 }
 
 .itemLabel {

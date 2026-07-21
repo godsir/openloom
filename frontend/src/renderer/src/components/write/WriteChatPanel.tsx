@@ -5,7 +5,6 @@ import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import AssistantMessage from '../chat/AssistantMessage'
 import UserMessage from '../chat/UserMessage'
-import ImageLightbox from '../shared/ImageLightbox'
 import { IconChevronDown, IconFileText, IconExternalLink, IconPlus } from '../../utils/icons'
 import styles from './WriteChatPanel.module.css'
 
@@ -47,9 +46,6 @@ export default function WriteChatPanel({
   const isStreaming = sessionId ? streamingIds.has(sessionId) : false
   const inlineErrors = useStore(s => s.inlineErrors)
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
-
-  const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
-  const closeLightbox = useStore(s => s.closeLightbox)
 
   const setAppMode = useStore(s => s.setAppMode)
   const switchSession = useStore(s => s.switchSession)
@@ -290,8 +286,6 @@ export default function WriteChatPanel({
           <IconChevronDown size={16} />
         </button>
       )}
-
-      <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
     </div>
   )
 }

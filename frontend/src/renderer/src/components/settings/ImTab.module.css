@@ -271,6 +271,26 @@
   color: var(--red, #ef4444);
 }
 
+/* 连接检测自身失败时的提示块（A9） */
+.testErrorBox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.testErrorBox .statError {
+  margin: 0;
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
 /* expand hint on the right of the stats row (sits under the action buttons) */
 .expandHint {
   margin-left: auto;

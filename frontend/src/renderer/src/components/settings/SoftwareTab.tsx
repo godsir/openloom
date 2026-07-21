@@ -319,6 +319,13 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   }
 
   const handleResetSize = async () => {
+    // 破坏性重置（字体/缩放）前先确认，避免误点一键清掉所有自定义（A10）
+    const ok = await useStore.getState().showConfirm(
+      t('software.resetConfirmTitle'),
+      t('software.resetConfirmMessage'),
+      true,
+    )
+    if (!ok) return
     // Reset font size to default (14px) — persisted via store action
     useStore.getState().setFontSize('default')
     setFontSize('default')

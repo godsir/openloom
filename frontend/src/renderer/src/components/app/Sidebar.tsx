@@ -90,7 +90,8 @@ export default function Sidebar() {
     loadCronJobs()
   }
 
-  useEffect(() => { inputRef.current?.focus() }, [])
+  // 不再在挂载时自动聚焦搜索框：Sidebar 会在离开聊天模式时卸载、回来时重挂，
+  // 自动聚焦会劫持用户焦点（改由 nav:search-conversations 快捷键触发）。
 
   const selectedCount = selectedSessionIds.size
   const selectionMode = selectedCount > 0
@@ -179,6 +180,7 @@ export default function Sidebar() {
               onKeyDown={e => e.key === 'Escape' && setQuery('')}
               placeholder={t('sidebar.searchPlaceholder')}
               className={styles.searchInput}
+              data-sidebar-search=""
             />
             {query && (
               <button onClick={() => setQuery('')} className={styles.searchClear}>

@@ -114,8 +114,13 @@ export default function ReviewPanel() {
   }, [reviewPanelOpen, workspaceRoot])
 
   const refreshGit = useCallback(async () => {
-    const d = await (window as any).loom?.getUncommittedChanges?.(workspaceRoot)
-    setGitData(d || fallback)
+    try {
+      const d = await (window as any).loom?.getUncommittedChanges?.(workspaceRoot)
+      setGitData(d || fallback)
+    } catch {
+      // refresh 失败时静默降级、保留现有数据：否则 commit/push 成功后 await
+      // refreshGit() 抛错，会被外层 catch 误报成"提交/推送失败"（B6）
+    }
   }, [workspaceRoot])
 
   const toggleFile = useCallback((f: string) => setExpandedFiles(p => { const n = new Set(p); if (n.has(f)) n.delete(f); else n.add(f); return n }), [])
@@ -175,7 +180,12 @@ export default function ReviewPanel() {
     if (gitData?.files.length) {
       prompt = t('review.promptWithDiff', { files: gitData.files.map(f => f.file).join('\n'), diff: gitData.diff.slice(0, 8000) })
     }
-    try { await sendMessage({ sessionId, content: prompt, permissionMode }) } finally { setReviewing(false) }
+    try {
+      await sendMessage({ sessionId, content: prompt, permissionMode })
+    } catch {
+      // 审查发起失败时给出反馈，而非留下未处理的 rejection（B7）
+      useStore.getState().addToast({ type: 'error', message: t('review.startFailed') })
+    } finally { setReviewing(false) }
   }, [sessionId, reviewing, gitData, t, permissionMode])
 
   if (!reviewPanelOpen) return null
@@ -199,7 +209,9 @@ export default function ReviewPanel() {
 
       <div className={styles.body}>
         {loadingGit && <div className={styles.emptyHint}>{t('review.loading')}</div>}
-        {!loadingGit && !hasChanges && !committed && <div className={styles.emptyHint}>{t('review.noChanges')}</div>}
+        {/* git 加载失败（非仓库 / git 不可用等）时独立展示错误，而非误报"无改动"（B3） */}
+        {!loadingGit && gitData?.error && <div className={styles.gitErrorHint}>{gitData.error}</div>}
+        {!loadingGit && !gitData?.error && !hasChanges && !committed && <div className={styles.emptyHint}>{t('review.noChanges')}</div>}
 
         {/* ---- Changed files ---- */}
         {hasChanges && (

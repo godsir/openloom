@@ -3361,7 +3361,7 @@ impl AgentTool for ScheduleReminder {
         };
 
         let mode = loom_cron::job::SessionMode::Isolated;
-        match scheduler.add_job(name, cron_expr, prompt, mode, 300).await {
+        match scheduler.add_job(name, cron_expr, prompt, mode, 300, None).await {
             Ok(id) => {
                 let label = match kind {
                     "daily" => "每天 AI 执行",

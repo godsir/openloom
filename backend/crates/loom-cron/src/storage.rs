@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
     last_run        INTEGER,
     next_run        INTEGER,
     run_count       INTEGER NOT NULL DEFAULT 0,
-    error_count     INTEGER NOT NULL DEFAULT 0
+    error_count     INTEGER NOT NULL DEFAULT 0,
+    model           TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cron_run_history (
@@ -134,6 +135,24 @@ fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Best-effort migration: add the `model` column to existing databases that
+/// predate per-job model support. New databases already have it from the DDL.
+fn ensure_model_column(conn: &Connection) -> Result<()> {
+    let has_model: bool = {
+        let mut stmt = conn.prepare("PRAGMA table_info(cron_jobs)")?;
+        let cols: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+        cols.iter().any(|name| name == "model")
+    };
+    if !has_model {
+        tracing::info!("adding 'model' column to cron_jobs");
+        conn.execute_batch("ALTER TABLE cron_jobs ADD COLUMN model TEXT;")?;
+    }
+    Ok(())
+}
+
 // ── Storage ───────────────────────────────────────────────────────────────────
 
 /// Manages the standalone `cron.db` SQLite database.
@@ -162,6 +181,10 @@ impl CronStorage {
         if let Err(e) = migrate_v1_to_v2(&conn) {
             tracing::warn!(error = %e, "cron db migration v1→v2 had issues; continuing");
         }
+        // Ensure the per-job 'model' column exists on pre-existing databases.
+        if let Err(e) = ensure_model_column(&conn) {
+            tracing::warn!(error = %e, "cron db 'model' column migration had issues; continuing");
+        }
         // Startup integrity check
         if let Err(e) = conn.execute_batch("PRAGMA integrity_check") {
             tracing::error!(error = %e, "cron db integrity check failed");
@@ -182,8 +205,8 @@ impl CronStorage {
             .map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         conn.execute(
             "INSERT INTO cron_jobs (id, name, cron_expression, prompt, enabled, session_mode,
-             timeout_secs, created_at, last_run, next_run, run_count, error_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             timeout_secs, created_at, last_run, next_run, run_count, error_count, model)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 job.id,
                 job.name,
@@ -197,6 +220,7 @@ impl CronStorage {
                 job.next_run,
                 job.run_count,
                 job.error_count,
+                job.model,
             ],
         )?;
         Ok(())
@@ -210,7 +234,7 @@ impl CronStorage {
             .map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, name, cron_expression, prompt, enabled, session_mode,
-                    timeout_secs, created_at, last_run, next_run, run_count, error_count
+                    timeout_secs, created_at, last_run, next_run, run_count, error_count, model
              FROM cron_jobs
              ORDER BY created_at",
         )?;
@@ -229,6 +253,7 @@ impl CronStorage {
                 next_run: row.get(9)?,
                 run_count: row.get::<_, i64>(10)? as u64,
                 error_count: row.get::<_, i64>(11)? as u64,
+                model: row.get(12)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -309,6 +334,7 @@ impl CronStorage {
         prompt: &str,
         session_mode: &SessionMode,
         timeout_secs: u64,
+        model: &Option<String>,
     ) -> Result<()> {
         let conn = self
             .conn
@@ -316,13 +342,14 @@ impl CronStorage {
             .map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let rows = conn.execute(
             "UPDATE cron_jobs SET name = ?1, cron_expression = ?2, prompt = ?3,
-             session_mode = ?4, timeout_secs = ?5 WHERE id = ?6",
+             session_mode = ?4, timeout_secs = ?5, model = ?6 WHERE id = ?7",
             params![
                 name,
                 cron_expression,
                 prompt,
                 session_mode.to_string(),
                 timeout_secs,
+                model,
                 job_id,
             ],
         )?;
@@ -353,7 +380,7 @@ impl CronStorage {
             .map_err(|e| anyhow::anyhow!("lock poisoned: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, name, cron_expression, prompt, enabled, session_mode,
-                    timeout_secs, created_at, last_run, next_run, run_count, error_count
+                    timeout_secs, created_at, last_run, next_run, run_count, error_count, model
              FROM cron_jobs WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![job_id], |row| {
@@ -371,6 +398,7 @@ impl CronStorage {
                 next_run: row.get(9)?,
                 run_count: row.get::<_, i64>(10)? as u64,
                 error_count: row.get::<_, i64>(11)? as u64,
+                model: row.get(12)?,
             })
         })?;
         match rows.next() {
@@ -538,6 +566,7 @@ mod tests {
             enabled: true,
             session_mode: SessionMode::Isolated,
             timeout_secs: 300,
+            model: None,
             created_at: 1700000000,
             last_run: None,
             next_run: None,
@@ -559,6 +588,41 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "test job");
         assert_eq!(loaded[0].cron_expression, "0 */6 * * *");
+    }
+
+    #[test]
+    fn test_model_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cron.db");
+        let storage = CronStorage::open(&db_path).unwrap();
+
+        // model = None round-trips as None.
+        let none_job = test_job("j-none", "no model", "0 */6 * * *");
+        storage.insert_job(&none_job).unwrap();
+
+        // model = Some(...) round-trips, and survives an update.
+        let mut some_job = test_job("j-some", "with model", "0 */6 * * *");
+        some_job.model = Some("claude-sonnet".to_string());
+        storage.insert_job(&some_job).unwrap();
+
+        let loaded = storage.get_job("j-none").unwrap().unwrap();
+        assert_eq!(loaded.model, None);
+        let loaded = storage.get_job("j-some").unwrap().unwrap();
+        assert_eq!(loaded.model.as_deref(), Some("claude-sonnet"));
+
+        storage
+            .update_job(
+                "j-some",
+                "with model",
+                "0 */6 * * *",
+                "帮我检查系统状态",
+                &SessionMode::Isolated,
+                300,
+                &Some("gpt-5".to_string()),
+            )
+            .unwrap();
+        let updated = storage.get_job("j-some").unwrap().unwrap();
+        assert_eq!(updated.model.as_deref(), Some("gpt-5"));
     }
 
     #[test]
@@ -616,6 +680,7 @@ mod tests {
                 "新的 AI 指令",
                 &SessionMode::Current,
                 600,
+                &None,
             )
             .unwrap();
 
@@ -640,7 +705,8 @@ mod tests {
                     "0 * * * * * *",
                     "x",
                     &SessionMode::Isolated,
-                    300
+                    300,
+                    &None,
                 )
                 .is_err()
         );

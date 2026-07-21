@@ -1,4 +1,5 @@
 import { StateCreator } from 'zustand'
+import { t as _t } from '../i18n'
 
 export interface TodoItem {
   id: string
@@ -27,6 +28,8 @@ export interface TodoSlice {
   todoPanelOpen: boolean
   todoLoading: boolean
   currentTodoSessionId: string | null
+  /** 最近由 AI 新建的待办 id，用于入场高亮（B17），短暂保留后清空 */
+  freshTodoIds: string[]
   loadTodos: (sessionId: string) => Promise<void>
   toggleTodoStatus: (todoId: string) => Promise<void>
   setTodoStatus: (sessionId: string, todoId: string, status: TodoItem['status']) => Promise<void>
@@ -37,14 +40,20 @@ export interface TodoSlice {
   handleTodoReplaced: (todos: TodoItem[]) => void
 }
 
+// 新增待办高亮的清除定时器（模块级，避免重复堆叠）
+let freshTimer: ReturnType<typeof setTimeout> | null = null
+
 export const createTodoSlice: StateCreator<TodoSlice> = (set, get) => ({
   todos: [],
   goal: null,
   todoPanelOpen: false,
   todoLoading: false,
   currentTodoSessionId: null,
+  freshTodoIds: [],
 
   loadTodos: async (sessionId: string) => {
+    // 切换会话时先清空旧列表，避免加载期间/失败后仍显示上一会话的待办（B4）
+    if (get().currentTodoSessionId !== sessionId) set({ todos: [] })
     set({ todoLoading: true, currentTodoSessionId: sessionId })
     try {
       const loomRpc = (await import('../services/jsonrpc')).loomRpc
@@ -53,7 +62,12 @@ export const createTodoSlice: StateCreator<TodoSlice> = (set, get) => ({
       if (get().currentTodoSessionId === sessionId) {
         set({ todos, todoLoading: false })
       }
-    } catch { set({ todoLoading: false }) }
+    } catch {
+      // 失败时保持空列表而非留下旧数据，并停止加载指示（B4）
+      if (get().currentTodoSessionId === sessionId) {
+        set({ todos: [], todoLoading: false })
+      }
+    }
   },
 
   toggleTodoStatus: async (todoId: string) => {
@@ -77,10 +91,11 @@ export const createTodoSlice: StateCreator<TodoSlice> = (set, get) => ({
         status: nextStatus,
       })
     } catch {
-      // Revert on failure
+      // Revert on failure，并提示用户，而非静默回滚让人误以为已生效（B11）
       set(s => ({
         todos: s.todos.map(t => t.id === todoId ? { ...t, status: todo.status } : t)
       }))
+      ;(get() as any).addToast?.({ type: 'error', message: _t('todo.toggleFailed') })
     }
   },
 
@@ -117,7 +132,13 @@ export const createTodoSlice: StateCreator<TodoSlice> = (set, get) => ({
   toggleTodoPanel: () => set(s => ({ todoPanelOpen: !s.todoPanelOpen })),
 
   handleTodoReplaced: (todos: TodoItem[]) => {
-    // Auto-open the panel when the AI creates todos
-    set({ todos, todoPanelOpen: todos.length > 0 ? true : get().todoPanelOpen })
+    // 计算本次新增的待办 id，供面板做入场高亮（B17）
+    const prevIds = new Set(get().todos.map(x => x.id))
+    const fresh = todos.filter(x => !prevIds.has(x.id)).map(x => x.id)
+    set({ todos, todoPanelOpen: todos.length > 0 ? true : get().todoPanelOpen, freshTodoIds: fresh })
+    if (fresh.length > 0) {
+      if (freshTimer) clearTimeout(freshTimer)
+      freshTimer = setTimeout(() => set({ freshTodoIds: [] }), 2600)
+    }
   },
 })

@@ -823,6 +823,13 @@
   inset: 0;
   z-index: 9999;
   background: var(--bg);
+  /* 进入全屏时淡入，避免瞬间黑屏切换（B20） */
+  animation: kgFullscreenIn 0.22s var(--ease-out);
+}
+
+@keyframes kgFullscreenIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .fullscreenCloseBtn {

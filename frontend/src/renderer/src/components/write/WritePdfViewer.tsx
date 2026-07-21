@@ -102,6 +102,25 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
     return () => ro.disconnect()
   }, [])
 
+  // 缩放处理函数 —— 必须声明在引用它们的键盘/滚轮 effect 之前：effect 的依赖
+  // 数组在渲染期即求值，若声明在后会命中暂时性死区（TDZ），打开 PDF 即抛
+  // "Cannot access 'zoomIn' before initialization" 崩溃。
+  const zoomOut = useCallback(() => {
+    setZoomMode('custom')
+    setCustomScale(s => Math.max(0.25, +(s - 0.25).toFixed(2)))
+  }, [])
+  const zoomIn = useCallback(() => {
+    setZoomMode('custom')
+    setCustomScale(s => Math.min(4.0, +(s + 0.25).toFixed(2)))
+  }, [])
+  const fitWidth = useCallback(() => {
+    setZoomMode('fit-width')
+  }, [])
+  const setActual = useCallback(() => {
+    setZoomMode('custom')
+    setCustomScale(1.0)
+  }, [])
+
   // Keyboard shortcuts (← → Space PageUp/Down Home End) — document-level so they
   // work even when the PDF pane doesn't have focus. Skipped when the user is
   // typing into an input/textarea/contenteditable so we don't hijack the chat box.
@@ -327,22 +346,6 @@ export const WritePdfViewer: React.FC<WritePdfViewerProps> = ({ filePath, worksp
     renderPage()
     return () => { cancelled = true }
   }, [currentPage, effectiveScale, pdfReady, containerWidthTick])
-
-  const zoomOut = useCallback(() => {
-    setZoomMode('custom')
-    setCustomScale(s => Math.max(0.25, +(s - 0.25).toFixed(2)))
-  }, [])
-  const zoomIn = useCallback(() => {
-    setZoomMode('custom')
-    setCustomScale(s => Math.min(4.0, +(s + 0.25).toFixed(2)))
-  }, [])
-  const fitWidth = useCallback(() => {
-    setZoomMode('fit-width')
-  }, [])
-  const setActual = useCallback(() => {
-    setZoomMode('custom')
-    setCustomScale(1.0)
-  }, [])
 
   if (loading) {
     return (

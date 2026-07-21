@@ -18,6 +18,9 @@ bc.addEventListener('message', (e: MessageEvent) => {
   } else if (d.cmd === 'size' && d.value) {
     size = d.value as PetSize
     window.loom.setPreference('petSize', size)
+    // 同步缩放透明窗口本身（此前只缩放 canvas，窗口仍是原尺寸，
+    // 宠物缩在大窗口一角，占位与可见精灵不符）。与 PetTab.changeSize 对齐。
+    window.loom.resizePet(SIZE_MAP[size])
     bc.postMessage({ type: 'size', size: SIZE_MAP[size] })
   }
 })

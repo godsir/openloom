@@ -24,11 +24,28 @@
   background: var(--accent-subtle);
 }
 
+/* 按压反馈：此前只有 hover，点击无视觉确认 */
+.btn:active {
+  transform: scale(0.94);
+}
+
+/* 键盘导航焦点指示 */
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .closeBtn {
   composes: btn;
 }
 
 .closeBtn:hover {
-  color: var(--red);
-  background: rgba(239, 68, 68, 0.1);
+  color: #fff;
+  background: var(--red);
+}
+
+.closeBtn:active {
+  transform: scale(0.94);
+  background: var(--red);
+  filter: brightness(0.85);
 }

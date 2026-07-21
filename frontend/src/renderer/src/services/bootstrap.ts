@@ -454,11 +454,18 @@ export async function bootstrapApp(): Promise<() => void> {
         useStore.getState().handleTodoReplaced((p?.todos as any[]) || [])
         break
       case 'plan.created':
-      case 'plan.updated':
+      case 'plan.updated': {
         // Plan content changed — reload todos so the panel reflects
         // checkbox changes synced by the backend.
         useStore.getState().loadTodos(sessionId).catch(() => {})
+        // 同时刷新计划列表，让 PlanPanel 及时看到新建/更新的计划（B1）
+        const planStore = useStore.getState()
+        const planWsRoot = sessionId
+          ? ((planStore as any).sessionWorkspaces?.[sessionId] || (planStore as any).defaultWorkspace || '')
+          : ((planStore as any).defaultWorkspace || '')
+        if (planWsRoot) planStore.loadPlans(planWsRoot).catch(() => {})
         break
+      }
       case 'process.output': {
         const po = p?.session_id as string | undefined
         if (!po) break

@@ -25,6 +25,7 @@ export default function UpdateModal() {
   const dismissUpdate = useStore((s) => s.dismissUpdate)
   const downloadUpdate = useStore((s) => s.downloadUpdate)
   const backgroundDownload = useStore((s) => s.backgroundDownload)
+  const cancelDownload = useStore((s) => s.cancelDownload)
   const installUpdate = useStore((s) => s.installUpdate)
 
   const { status, version, releaseNotes, progress, bytesPerSecond, transferred, total, error } = update
@@ -106,6 +107,9 @@ export default function UpdateModal() {
                 <span>{formatBytes(transferred)} / {formatBytes(total)}</span>
                 <span>{formatSpeed(bytesPerSecond)}</span>
               </div>
+            </div>
+            <div className={styles.actions}>
+              <button className={styles.dismissBtn} onClick={cancelDownload}>{t('updates.cancelDownload')}</button>
             </div>
           </>
         )}

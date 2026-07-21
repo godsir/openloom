@@ -9,6 +9,13 @@
   border-right: 1px solid var(--border);
   background: var(--bg-surface);
   overflow: hidden;
+  /* 展开时从左侧滑入（A20） */
+  animation: sidebarSlideIn var(--dur-normal) var(--ease-out);
+}
+
+@keyframes sidebarSlideIn {
+  from { opacity: 0; transform: translateX(-16px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .header {

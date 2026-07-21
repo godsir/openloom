@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
+import { t } from '../../i18n'
 import Select from '../shared/Select'
 import type { ModelListItem } from '../../types/bindings'
 
@@ -22,12 +23,19 @@ function sortModels(models: ModelListItem[]): ModelListItem[] {
   })
 }
 
+// 全局瞬态提示（DynamicIslandCenter 渲染）
+function toast(text: string) {
+  ;(useStore.getState() as any).showIslandTransient?.(text, 2200)
+}
+
 export default function ModelSelector() {
   const models = useStore((s) => s.models)
   const currentModel = useStore((s) => s.currentModel)
+  const [modelsLoading, setModelsLoading] = useState(true)
   const { setModels, setCurrentModel } = useStore.getState()
 
   useEffect(() => {
+    setModelsLoading(true)
     loomRpc<{ models: ModelListItem[]; activeModel: string | null }>('model.list')
       .then((result) => {
         if (result.models?.length) {
@@ -40,7 +48,11 @@ export default function ModelSelector() {
           }
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        // 不再静默吞掉：加载失败给出可见反馈（A13）
+        toast(t('model.loadFailed'))
+      })
+      .finally(() => setModelsLoading(false))
   }, [])
 
   const options = useMemo(() => {
@@ -58,10 +70,15 @@ export default function ModelSelector() {
       options={options}
       onChange={(v) => {
         setCurrentModel(v)
-        loomRpc('model.switch', { model: v }).catch(() => {})
+        loomRpc('model.switch', { model: v }).catch(() => {
+          toast(t('model.switchFailed'))
+        })
       }}
       variant="pill"
       menuWidth={220}
+      ariaLabel={t('input.model')}
+      emptyText={t('model.empty')}
+      loading={modelsLoading}
     />
   )
 }

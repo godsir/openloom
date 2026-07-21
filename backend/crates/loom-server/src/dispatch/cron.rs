@@ -146,9 +146,15 @@ async fn handle_create(
         .and_then(|v| v.as_u64())
         .unwrap_or(300)
         .clamp(1, 3600);
+    // Optional per-job model override (empty string / absent = use active model).
+    let model = params
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     match cron
-        .add_job(name, cron_expr, prompt, session_mode, timeout_secs)
+        .add_job(name, cron_expr, prompt, session_mode, timeout_secs, model)
         .await
     {
         Ok(id) => Ok(json!({ "id": id })),
@@ -185,9 +191,14 @@ async fn handle_update(
         .and_then(|v| v.as_u64())
         .unwrap_or(300)
         .clamp(1, 3600);
+    let model = params
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     match cron
-        .update_job(job_id, name, cron_expr, prompt, session_mode, timeout_secs)
+        .update_job(job_id, name, cron_expr, prompt, session_mode, timeout_secs, model)
         .await
     {
         Ok(()) => Ok(json!({ "updated": true })),

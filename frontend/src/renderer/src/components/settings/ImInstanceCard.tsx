@@ -53,6 +53,7 @@ export default function ImInstanceCard({ config }: Props) {
   const [showQr, setShowQr] = useState(false)
   const [showPopoQr, setShowPopoQr] = useState(false)
   const [showTest, setShowTest] = useState(false)
+  const [toggling, setToggling] = useState(false)
   const [nameDraft, setNameDraft] = useState(config.instanceName)
   const [allowDraft, setAllowDraft] = useState(config.allowFrom.join('\n'))
   const [groupAllowDraft, setGroupAllowDraft] = useState(config.groupAllowFrom.join('\n'))
@@ -95,17 +96,27 @@ export default function ImInstanceCard({ config }: Props) {
   }
 
   const handleToggle = async (checked: boolean) => {
-    if (checked) {
-      const res = await startChannel(config.platform, config.instanceId)
-      if (!res.ok) {
-        addToast({ type: 'error', message: `${t('im.startFail')}${res.error ? `: ${res.error}` : ''}` })
-        return
+    if (toggling) return
+    setToggling(true)
+    try {
+      if (checked) {
+        const res = await startChannel(config.platform, config.instanceId)
+        if (!res.ok) {
+          addToast({ type: 'error', message: `${t('im.startFail')}${res.error ? `: ${res.error}` : ''}` })
+          return
+        }
+        update({ enabled: true })
+      } else {
+        const res = await stopChannel(config.platform, config.instanceId)
+        if (!res.ok) {
+          // 与启动失败对称：停止失败也不翻转 UI 状态，避免显示与实际脱节（A9）
+          addToast({ type: 'error', message: `${t('im.stopFail')}${res.error ? `: ${res.error}` : ''}` })
+          return
+        }
+        update({ enabled: false })
       }
-      update({ enabled: true })
-    } else {
-      const res = await stopChannel(config.platform, config.instanceId)
-      if (!res.ok) addToast({ type: 'error', message: `${t('im.stopFail')}${res.error ? `: ${res.error}` : ''}` })
-      update({ enabled: false })
+    } finally {
+      setToggling(false)
     }
   }
 
@@ -309,8 +320,9 @@ export default function ImInstanceCard({ config }: Props) {
             <button
               className={`${styles.instanceBtn} ${connected ? styles.instanceBtnDanger : styles.instanceBtnPrimary}`}
               onClick={() => handleToggle(!connected)}
+              disabled={toggling}
             >
-              {connected ? t('im.stop') : t('im.start')}
+              {toggling ? '…' : connected ? t('im.stop') : t('im.start')}
             </button>
           </div>
         </div>

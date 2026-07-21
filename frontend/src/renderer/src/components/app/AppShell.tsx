@@ -11,6 +11,7 @@ import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRe
 import { connectWebSocket } from '../../services/websocket'
 import { useLocale } from '../../i18n'
 import TextEditingContextMenu from '../shared/TextEditingContextMenu'
+import ImageLightbox from '../shared/ImageLightbox'
 import logoRelease from '@asset/icon.png'
 import logoDev from '@asset/icon_dev.png'
 import styles from './AppShell.module.css'
@@ -26,6 +27,7 @@ export default function AppShell({ children }: { children?: ReactNode }) {
   const port = useStore(s => s.port)
   const appMode = useStore(s => s.appMode)
   const setAppMode = useStore(s => s.setAppMode)
+  const closeLightbox = useStore(s => s.closeLightbox)
   const prevModeRef = useRef<'chat' | 'write'>('chat')
   const [reconnecting, setReconnecting] = useState(false)
   const [restarting, setRestarting] = useState(false)
@@ -219,6 +221,8 @@ export default function AppShell({ children }: { children?: ReactNode }) {
       </div>
 
       <TextEditingContextMenu />
+      {/* 灯箱全局唯一挂载点（此前聊天/写作多处重复挂载导致遮罩叠加） */}
+      <ImageLightbox onClose={closeLightbox} />
     </div>
   )
 }

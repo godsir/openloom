@@ -23,6 +23,8 @@ export interface SessionSummary {
 export interface SessionSlice {
   sessions: SessionSummary[]
   currentSessionId: string | null
+  /** 切换会话后历史消息仍在加载（用于展示 skeleton 而非空态引导页） */
+  messagesLoading: boolean
   pinnedIds: Set<string>
   selectedSessionIds: Set<string>
   sessionWorkspaces: Record<string, string>
@@ -57,6 +59,7 @@ export interface SessionSlice {
 export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
   sessions: [],
   currentSessionId: null,
+  messagesLoading: false,
   pinnedIds: new Set(),
   selectedSessionIds: new Set(),
   sessionWorkspaces: {},
@@ -94,7 +97,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       get().toggleSessionSelect(id)
       return
     }
-    set({ currentSessionId: id })
+    set({ currentSessionId: id, messagesLoading: true })
     try {
       await loomRpc('session.switch', { session_id: id })
     } catch {
@@ -111,7 +114,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
       // Force UI refresh — copy Maps so zustand sees new references for React re-render
       const next = new Map((get() as any).messagesBySession as Map<string, any>)
       const nextActivity = { ...(get() as any).streamingActivity }
-      set({ messagesBySession: next, streamingActivity: nextActivity } as any)
+      set({ messagesBySession: next, streamingActivity: nextActivity, messagesLoading: false } as any)
       return
     }
     try {
@@ -220,8 +223,10 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
           cacheWrite: latestUsage.cacheWrite || 0,
         })
       }
+      set({ messagesLoading: false })
     } catch {
       ;(get() as any).addToast?.({ type: 'error', message: t('sessions.loadFailed') })
+      set({ messagesLoading: false })
     }
   },
 

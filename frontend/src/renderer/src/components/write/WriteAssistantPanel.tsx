@@ -1,9 +1,12 @@
 import React, { useState, useCallback } from 'react'
 import { useWriteStore } from '../../stores/write'
+import { useStore } from '../../stores'
+import { loomRpc } from '../../services/jsonrpc'
+import { streamBufferManager } from '../../services/stream-buffer'
 import { composeWritePrompt } from '../../write/quoted-selection'
 import { resolveAgentPreset } from '../../write/agent-presets'
 import { useLocale } from '../../i18n'
-import { IconSparkles, IconSend, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck } from '../../utils/icons'
+import { IconSparkles, IconSend, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck, IconStopCircle } from '../../utils/icons'
 import WriteChatPanel from './WriteChatPanel'
 import styles from './WriteAssistantPanel.module.css'
 
@@ -39,6 +42,21 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
 
   const sessionId = activeFilePath ? (fileThreads[activeFilePath] || null) : null
   const activeFileName = activeFilePath ? activeFilePath.split('/').pop() || null : null
+
+  // 当前文件会话是否正在流式生成：是则发送键切换为"停止"（A22）
+  const streamingIds = useStore(s => s.streamingSessionIds)
+  const isStreaming = sessionId ? streamingIds.has(sessionId) : false
+
+  const handleStop = useCallback(async () => {
+    if (!sessionId) return
+    // 与聊天模式一致：先标记取消以吸收被 kill turn 的迟到 StreamEnd，再下发停止
+    streamBufferManager.markCancelled(sessionId)
+    try {
+      await loomRpc('chat.stop', { session_id: sessionId })
+    } catch {
+      /* ignore */
+    }
+  }, [sessionId])
 
   const handleSend = useCallback(async (text?: string) => {
     const msg = (text || assistantText).trim()
@@ -123,12 +141,13 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
             placeholder={t('write.inputInstruction')}
           />
           <button
-            className={styles.sendBtn}
-            onClick={() => handleSend()}
-            disabled={!assistantText.trim()}
-            title={t('chat.send')}
+            className={isStreaming ? styles.stopBtn : styles.sendBtn}
+            onClick={() => (isStreaming ? handleStop() : handleSend())}
+            disabled={!isStreaming && !assistantText.trim()}
+            title={isStreaming ? t('chat.stop') : t('chat.send')}
+            aria-label={isStreaming ? t('chat.stop') : t('chat.send')}
           >
-            <IconSend size={13} />
+            {isStreaming ? <IconStopCircle size={13} /> : <IconSend size={13} />}
           </button>
         </div>
       </div>

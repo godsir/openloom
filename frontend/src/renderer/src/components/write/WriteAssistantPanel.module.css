@@ -7,6 +7,13 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 打开时从右侧滑入，避免"啪"地弹出（A20） */
+  animation: panelSlideIn var(--dur-normal) var(--ease-out);
+}
+
+@keyframes panelSlideIn {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .header {
@@ -66,6 +73,25 @@
 }
 .sendBtn:hover { background: var(--accent-hover); }
 .sendBtn:disabled { opacity: 0.3; cursor: default; }
+
+/* 流式生成中的停止按钮：用醒目色提示"可中断"（A22） */
+.stopBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--red, #ef4444);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--dur-fast) var(--ease-out);
+  animation: breathe 1.4s ease-in-out infinite;
+}
+.stopBtn:hover { filter: brightness(1.15); }
+.stopBtn:active { transform: scale(0.94); }
 
 /* ── Persona switcher ── */
 .personaRow {

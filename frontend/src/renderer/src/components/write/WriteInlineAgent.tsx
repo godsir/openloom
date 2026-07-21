@@ -156,6 +156,8 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
               key={qa.id}
               className={styles.quickBtn}
               onClick={() => handleQuickAction(qa.id)}
+              disabled={!hasSelection}
+              title={hasSelection ? undefined : '请先选中文本'}
             >
               {qa.label}
             </button>

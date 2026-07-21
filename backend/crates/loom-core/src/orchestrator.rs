@@ -1183,6 +1183,8 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
                 workspace_path: Some(workspace_path),
                 permissions,
                 sandbox_config,
+                model_configs: self.model_configs.clone(),
+                key_store: self.key_store.clone(),
             }))
             .await;
 
@@ -7477,6 +7479,115 @@ struct CronPromptExecutor {
     /// Sandbox config — used to build a guard so cron tool calls honor the same
     /// filesystem deny floor / workspace confinement as interactive turns.
     sandbox_config: Arc<tokio::sync::RwLock<loom_types::config::SandboxConfig>>,
+    /// Model configs — used to build a one-off client for a per-job model override.
+    model_configs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
+    /// API key store — used to resolve keys for per-job model overrides.
+    key_store: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+}
+
+impl CronPromptExecutor {
+    /// Build a one-off CloudClient for the named model WITHOUT touching the
+    /// global active client. Returns None if the model is unknown, has no model
+    /// ID, or lacks an API key — callers fall back to the active client.
+    async fn client_for_model(&self, name: &str) -> Option<Arc<dyn CloudClient>> {
+        let config = self.model_configs.read().await.get(name).cloned();
+        let config = match config {
+            Some(c) => c,
+            None => {
+                tracing::warn!(model = %name, "cron: per-job model not found in configs; using active model");
+                return None;
+            }
+        };
+        let model = match &config.model {
+            Some(m) => m.clone(),
+            None => {
+                tracing::warn!(model = %name, "cron: per-job model config has no model ID; using active model");
+                return None;
+            }
+        };
+        let base_url = config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| match config.backend {
+                loom_types::ModelBackend::LmStudio => "http://localhost:1234/v1".into(),
+                loom_types::ModelBackend::Ollama => "http://localhost:11434/v1".into(),
+                loom_types::ModelBackend::Anthropic => "https://api.anthropic.com".into(),
+                loom_types::ModelBackend::OpenAI => "https://api.openai.com".into(),
+                loom_types::ModelBackend::DeepSeek => "https://api.deepseek.com/v1".into(),
+                loom_types::ModelBackend::Custom => "http://localhost:8080/v1".into(),
+            });
+
+        if config.backend.is_local_inference() {
+            match loom_inference::InferenceEngine::connect(&base_url, &model, config.context_size)
+                .await
+            {
+                Ok(engine) => Some(Arc::new(engine)),
+                Err(e) => {
+                    tracing::warn!(model = %model, error = %e, "cron: local engine connect failed; using active model");
+                    None
+                }
+            }
+        } else {
+            let api_key = self.resolve_key(config.api_key_env.as_deref(), &config.backend).await;
+            match api_key {
+                Some(key) => {
+                    let is_anthropic = config.api_format.as_deref() == Some("anthropic")
+                        || matches!(config.backend, loom_types::ModelBackend::Anthropic);
+                    if is_anthropic {
+                        Some(Arc::new(loom_inference::AnthropicClient::new(
+                            key,
+                            model,
+                            base_url,
+                        )) as Arc<dyn CloudClient>)
+                    } else {
+                        Some(Arc::new(loom_inference::OpenAIClient::new(
+                            key, model, base_url, false,
+                        )) as Arc<dyn CloudClient>)
+                    }
+                }
+                None => {
+                    tracing::warn!(model = %model, "cron: no API key for per-job model; using active model");
+                    None
+                }
+            }
+        }
+    }
+
+    /// Resolve an API key for a model config (mirrors Orchestrator::resolve_api_key).
+    async fn resolve_key(
+        &self,
+        api_key_env: Option<&str>,
+        backend: &loom_types::ModelBackend,
+    ) -> Option<String> {
+        let guard = self.key_store.read().await;
+        if let Some(raw) = api_key_env {
+            if let Some(val) = guard.get(raw) {
+                return Some(val.clone());
+            }
+            let looks_like_env_var = !raw.is_empty()
+                && raw
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+            if !looks_like_env_var && !raw.is_empty() {
+                return Some(raw.to_string());
+            }
+            if let Ok(val) = std::env::var(raw)
+                && !val.is_empty()
+            {
+                return Some(val);
+            }
+        }
+        let auto_env = match backend {
+            loom_types::ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
+            loom_types::ModelBackend::OpenAI => "OPENAI_API_KEY",
+            loom_types::ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
+            _ => "OPENLOOM_API_KEY",
+        };
+        guard
+            .get(auto_env)
+            .cloned()
+            .or_else(|| std::env::var(auto_env).ok().filter(|v| !v.is_empty()))
+    }
 }
 
 impl PromptExecutor for CronPromptExecutor {
@@ -7484,6 +7595,7 @@ impl PromptExecutor for CronPromptExecutor {
         &self,
         prompt: &str,
         timeout_secs: u64,
+        model: Option<&str>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>>
     {
         let client_opt = self.cloud_client.clone();
@@ -7494,13 +7606,23 @@ impl PromptExecutor for CronPromptExecutor {
         let sandbox_config = self.sandbox_config.clone();
         // Per-turn timeout: give each LLM call a fair share of the total budget.
         let per_turn_timeout = std::cmp::max(30, timeout_secs / 3);
+        let model_override = model.map(|s| s.to_string());
 
         Box::pin(async move {
-            let client = {
-                let guard = client_opt.read().await;
-                guard.clone().ok_or_else(|| {
-                    anyhow::anyhow!("No cloud client configured — set up a model first")
-                })?
+            // Pick the client: a per-job model override wins; otherwise fall back
+            // to the active (default) cloud client.
+            let mut client: Option<Arc<dyn CloudClient>> = None;
+            if let Some(ref name) = model_override {
+                client = self.client_for_model(name).await;
+            }
+            let client = match client {
+                Some(c) => c,
+                None => {
+                    let guard = client_opt.read().await;
+                    guard.clone().ok_or_else(|| {
+                        anyhow::anyhow!("No cloud client configured — set up a model first")
+                    })?
+                }
             };
 
             // Build tool definitions from the registry, filtered by permissions.

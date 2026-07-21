@@ -39,6 +39,10 @@ pub struct CronJob {
     pub session_mode: SessionMode,
     /// Timeout in seconds for the AI execution (default 300).
     pub timeout_secs: u64,
+    /// Optional model name override — when set, this job runs on the named model
+    /// instead of the currently active model. None = use the active model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// Unix timestamp (seconds) when this job was created.
     pub created_at: i64,
     /// Unix timestamp (seconds) of the last successful run.
@@ -89,6 +93,9 @@ pub struct CronJobSummary {
     pub prompt: String,
     pub enabled: bool,
     pub session_mode: SessionMode,
+    /// Model override for this job (None = active model).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     pub last_run: Option<i64>,
     pub next_run: Option<i64>,
     pub run_count: u64,
@@ -106,6 +113,7 @@ impl From<&CronJob> for CronJobSummary {
             prompt: job.prompt.clone(),
             enabled: job.enabled,
             session_mode: job.session_mode.clone(),
+            model: job.model.clone(),
             last_run: job.last_run,
             next_run: job.next_run,
             run_count: job.run_count,

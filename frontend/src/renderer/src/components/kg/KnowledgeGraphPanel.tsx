@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
-import KnowledgeGraphTab from './KnowledgeGraphTab'
+import KnowledgeGraphTab, { type KgScopeFilter } from './KnowledgeGraphTab'
 import MaintenanceTab from './MaintenanceTab'
 import MemoryHealthPanel from './MemoryHealthPanel'
 import { PersonaPanelConnected } from './PersonaPanel'
@@ -11,6 +11,11 @@ import styles from './KnowledgeGraphPanel.module.css'
 export default function KnowledgeGraphPanel() {
   const { t } = useLocale()
   const [activeTab, setActiveTab] = useState<'graph' | 'kg' | 'persona' | 'patterns' | 'health' | 'maintenance'>('graph')
+
+  // 列表搜索态提升到面板层，切换主 tab（graph/kg/…）再切回时不丢失搜索条件（B20.1）
+  const [kgQuery, setKgQuery] = useState('')
+  const [kgScope, setKgScope] = useState<KgScopeFilter>('all')
+  const [kgSearchActive, setKgSearchActive] = useState(false)
 
   // ── Pattern data (connected wrapper inline) ──
   const patternReport = useStore(s => s.patternReport)
@@ -53,8 +58,23 @@ export default function KnowledgeGraphPanel() {
           onClick={() => setActiveTab('maintenance')}
         >{t('kg.tab.maintenance')}</button>
       </div>
-      {activeTab === 'graph' && <KnowledgeGraphTab initialSubTab="graph" />}
-      {activeTab === 'kg' && <KnowledgeGraphTab initialSubTab="list" />}
+      {activeTab === 'graph' && (
+        <KnowledgeGraphTab
+          initialSubTab="graph"
+          query={kgQuery} setQuery={setKgQuery}
+          scopeFilter={kgScope} setScopeFilter={setKgScope}
+          searchActive={kgSearchActive} setSearchActive={setKgSearchActive}
+        />
+      )}
+      {activeTab === 'kg' && (
+        <KnowledgeGraphTab
+          initialSubTab="list"
+          onRequestGraphView={() => setActiveTab('graph')}
+          query={kgQuery} setQuery={setKgQuery}
+          scopeFilter={kgScope} setScopeFilter={setKgScope}
+          searchActive={kgSearchActive} setSearchActive={setKgSearchActive}
+        />
+      )}
       {activeTab === 'persona' && <PersonaPanelConnected />}
       {activeTab === 'patterns' && (
         <PatternPanel

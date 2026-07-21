@@ -17,6 +17,7 @@ export default function WriteExportMenu() {
   const menuRef = useRef<HTMLDivElement>(null)
   const fileContent = useWriteStore(s => s.fileContent)
   const activeFilePath = useWriteStore(s => s.activeFilePath)
+  const showToast = useWriteStore(s => s.showToast)
   const { t } = useLocale()
 
   const handleClickOutside = useCallback((e: MouseEvent) => {
@@ -42,37 +43,50 @@ export default function WriteExportMenu() {
 
     const html = renderMarkdown(fileContent)
     const loom = (window as any).loom
+    const formatLabel = EXPORT_OPTIONS.find(o => o.key === key)?.label || key
 
     try {
+      let handled = false
       switch (key) {
         case 'markdown': {
           // Copy markdown source to clipboard
           if (loom?.copyWriteDocumentAsRichText) {
             await loom.copyWriteDocumentAsRichText(activeFilePath, '', fileContent)
+            handled = true
           }
           break
         }
         case 'html': {
           if (loom?.exportWriteHtml) {
             await loom.exportWriteHtml(html, title)
+            handled = true
           }
           break
         }
         case 'pdf': {
           if (loom?.exportWritePdf) {
             await loom.exportWritePdf(html, title)
+            handled = true
           }
           break
         }
         case 'docx': {
           if (loom?.exportWriteDocx) {
             await loom.exportWriteDocx(html, title)
+            handled = true
           }
           break
         }
       }
+      // 导出成功/不可用/失败都给出可见反馈，而非静默（A21）
+      if (handled) {
+        showToast('success', t('write.exportedOk', { format: formatLabel }))
+      } else {
+        showToast('error', t('write.exportFailed'))
+      }
     } catch (err) {
       console.error('Export failed:', err)
+      showToast('error', t('write.exportFailed'))
     }
   }
 

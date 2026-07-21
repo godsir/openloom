@@ -2,7 +2,7 @@ import { useMemo, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../stores'
 import { useIMStore, PLATFORM_LABELS, type Platform } from '../../stores/im'
 import type { StreamPhase } from '../../stores/streaming'
-import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown, IconUsers } from '../../utils/icons'
+import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown, IconUsers, IconX } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import PlatformIcon from '../shared/PlatformIcon'
 import { streamBufferManager } from '../../services/stream-buffer'
@@ -96,10 +96,21 @@ export default function DynamicIslandCenter() {
     wasStreamingRef.current = isStreaming
   }, [isStreaming, islandExpanded, setIslandExpanded])
 
+  // 重启进行中标志：防止按钮无 loading 时被连点触发多次重启
+  const [restarting, setRestarting] = useState(false)
+
   const handleRestart = async () => {
-    const newPort = await window.loom.restartEngine()
-    useStore.getState().setPort(newPort)
-    useStore.getState().setEngineState('running')
+    if (restarting) return
+    setRestarting(true)
+    try {
+      const newPort = await window.loom.restartEngine()
+      useStore.getState().setPort(newPort)
+      useStore.getState().setEngineState('running')
+    } catch {
+      // 引擎状态保持 stopped，由 crash 态继续展示
+    } finally {
+      setRestarting(false)
+    }
   }
 
   // IM channel connect/disconnect → transient island notification
@@ -206,7 +217,7 @@ export default function DynamicIslandCenter() {
                   </div>
                 ))}
                 {allRunningLive.length > 5 && (
-                  <span className={styles.expandedMore}>...及另外 {allRunningLive.length - 5} 项</span>
+                  <span className={styles.expandedMore}>{t('island.andMore', { n: allRunningLive.length - 5 })}</span>
                 )}
               </div>
             )}
@@ -252,6 +263,14 @@ export default function DynamicIslandCenter() {
                 ? `${(update.bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`
                 : t('island.preparing')}
             </div>
+            <div className={styles.layerRow}>
+              <button
+                className={styles.islandDismissBtn}
+                onClick={(e) => { e.stopPropagation(); useStore.getState().cancelDownload() }}
+              >
+                {t('updates.cancelDownload')}
+              </button>
+            </div>
           </div>
         )}
 
@@ -288,9 +307,9 @@ export default function DynamicIslandCenter() {
               <span className={styles.expandedTitle}>{t('app.engineStopped')}</span>
             </div>
             <div className={styles.expandedHint}>{t('island.crashHint')}</div>
-            <button className={styles.islandActionBtn} onClick={handleRestart}>
+            <button className={styles.islandActionBtn} onClick={handleRestart} disabled={restarting}>
               <IconRotateCcw size={12} />
-              {t('app.restartEngine')}
+              {restarting ? t('app.restarting') : t('app.restartEngine')}
             </button>
           </div>
         )}
@@ -448,7 +467,7 @@ export default function DynamicIslandCenter() {
             title={t('common.dismiss')}
             onClick={(e) => { e.stopPropagation(); useStore.getState().dismissUpdate() }}
           >
-            ✕
+            <IconX size={11} />
           </button>
         </div>
       </div>
@@ -460,9 +479,9 @@ export default function DynamicIslandCenter() {
           <span className={styles.dynamicTitle}>{t('app.engineStopped')}</span>
         </div>
         <div className={styles.layerRow}>
-          <button className={styles.islandActionBtn} onClick={(e) => { e.stopPropagation(); handleRestart() }}>
+          <button className={styles.islandActionBtn} onClick={(e) => { e.stopPropagation(); handleRestart() }} disabled={restarting}>
             <IconRotateCcw size={12} />
-            {t('app.restartEngine')}
+            {restarting ? t('app.restarting') : t('app.restartEngine')}
           </button>
         </div>
       </div>

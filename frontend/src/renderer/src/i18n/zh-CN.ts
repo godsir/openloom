@@ -4,6 +4,7 @@ export const zhCN: TranslationMap = {
   // ── Common ──────────────────────────────────────────────────────
   'common.save': '保存',
   'common.cancel': '取消',
+  'common.removeQuote': '移除引用',
   'common.delete': '删除',
   'common.confirm': '确认',
   'common.close': '关闭',
@@ -50,6 +51,11 @@ export const zhCN: TranslationMap = {
   'common.imageHint': '滚轮缩放 · 拖拽移动 · 双击重置 · Esc 关闭',
   'common.copyImage': '复制图片',
   'common.saveImage': '保存图片',
+  'common.imageCopied': '已复制图片',
+  'common.imageUrlCopied': '已复制图片链接',
+  'common.imageLoading': '图片加载中…',
+  'common.prevImage': '上一张',
+  'common.nextImage': '下一张',
   'common.openFile': '打开文件',
   'common.clickToLoadImage': '点击加载远程图片',
 
@@ -100,6 +106,7 @@ export const zhCN: TranslationMap = {
   'island.configSaved': '设置已保存',
   'island.extracting': '记忆提取中',
   'island.extractingHint': '从对话中提取记忆节点',
+  'island.andMore': '...及另外 {n} 项',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '会话',
@@ -199,8 +206,10 @@ export const zhCN: TranslationMap = {
 
   // ── Plan & Todo ──────────────────────────────────────────────────
   'todo.panelTitle': '待办',
+  'todo.count': '{n} 项',
   'todo.empty': '暂无待办事项',
   'todo.emptyHint': '在对话中使用 /plan 创建计划，AI 会自动生成任务列表',
+  'todo.toggleFailed': '更新待办状态失败',
   'todo.pending': '待处理',
   'todo.inProgress': '进行中',
   'todo.completed': '已完成',
@@ -208,6 +217,19 @@ export const zhCN: TranslationMap = {
   'todo.markPending': '标记为待处理',
   'todo.markInProgress': '标记为进行中',
   'todo.markCompleted': '标记为已完成',
+
+  // ── Plan Panel ───────────────────────────────────────────────────
+  'plan.title': '计划',
+  'plan.empty': '暂无计划',
+  'plan.emptyHint': '在对话中输入 /plan 你的想法 即可创建计划',
+  'plan.selectPlan': '选择一个计划：',
+  'plan.placeholder': '计划内容将显示在这里...',
+  'plan.saveFailed': '计划保存失败',
+  'plan.status.drafting': '草稿',
+  'plan.status.ready': '就绪',
+  'plan.status.building': '构建中',
+  'plan.status.completed': '已完成',
+  'plan.status.error': '出错',
 
   // ── Slash Commands ────────────────────────────────────────────────
   'slash.builtinCommands': '内置命令',
@@ -253,6 +275,9 @@ export const zhCN: TranslationMap = {
   'input.sessionCacheHit': '会话累计缓存命中',
   'input.sessionCost': '会话累计消耗',
   'input.model': '模型',
+  'model.loadFailed': '模型列表加载失败',
+  'model.switchFailed': '模型切换失败',
+  'model.empty': '暂无可用模型',
   'input.noMatchingFiles': '无匹配文件',
   'input.searchFiles': '输入文件名搜索...',
   'input.explainCode': '解释这段代码...',
@@ -277,6 +302,7 @@ export const zhCN: TranslationMap = {
   'input.thinkingTitle': '思考: {level}',
 
   // ── Entity Selector ──────────────────────────────────────────────
+  'entity.selectorLabel': '选择执行实体（当前：{name}）',
   'entity.agentTab': 'Agent',
   'entity.teamTab': '专家团',
   'entity.noAgents': '暂无 Agent 配置',
@@ -451,6 +477,10 @@ export const zhCN: TranslationMap = {
   'kg.exitFullscreen': '退出全屏',
   'kg.refreshGraph': '刷新图谱',
   'kg.emptyEntityList': '暂无实体。知识图谱会在与 AI 对话过程中自动积累。',
+  'kg.searchFailed': '知识图谱搜索失败',
+  'kg.loadFailed': '知识图谱加载失败',
+  'kg.noSearchMatch': '未找到匹配的实体',
+  'kg.deleteRelationConfirm': '确定要删除"{source}"与"{target}"之间的关系吗？',
   'kg.confidence': '确信',
   'kg.confidenceTooltip': 'AI 对该实体信息的把握程度',
   'kg.viewRelated': '查看关联',
@@ -843,6 +873,8 @@ export const zhCN: TranslationMap = {
   'write.exportHTML': '导出 HTML',
   'write.exportPDF': '导出 PDF',
   'write.exportDOCX': '导出 DOCX',
+  'write.exportedOk': '已导出 {format}',
+  'write.exportFailed': '导出失败',
   'write.settingsDefaultPreviewDesc': '选择默认的预览模式，所见即所得适合写作，实时适合代码',
   'write.settingsAutoSaveIntervalDesc': '启用自动保存后，AI 写作助手会定期保存你的工作进度，防止数据丢失。建议设置为 900 ms（9 秒）或更长时间，以平衡性能和数据安全。',
 
@@ -917,6 +949,8 @@ export const zhCN: TranslationMap = {
   // ── Updates ─────────────────────────────────────────────────────
   'updates.checkFailed': '检查更新失败',
   'updates.downloadFailed': '下载失败',
+  'updates.cancelDownload': '取消下载',
+  'updates.backgroundStarted': '已开始后台下载，进度见灵动岛',
 
   // ── Pet / Tray ──────────────────────────────────────────────────
   'pet.leaving': '我走了',
@@ -1653,6 +1687,8 @@ export const zhCN: TranslationMap = {
   'software.resetToDefault': '恢复默认大小',
   'software.resetToDefaultDesc': '将字体大小和界面/代码字体恢复为默认值',
   'software.resetComplete': '已恢复默认字体大小',
+  'software.resetConfirmTitle': '恢复默认设置',
+  'software.resetConfirmMessage': '将把字体大小、界面字体、代码字体和缩放比例全部恢复为默认值，确定继续吗？',
 
   // ── Token Tab ───────────────────────────────────────────────────
   'token.title': 'Token 用量',
@@ -1778,6 +1814,7 @@ export const zhCN: TranslationMap = {
   'im.wechatConfigHint': '微信通过扫码连接，无需手动填写凭证',
   'im.connectTestTitle': '连接测试',
   'im.testRunning': '正在测试...',
+  'im.testFailed': '连接检测失败',
   'im.verdictPass': '连接正常',
   'im.verdictWarn': '需要关注',
   'im.verdictFail': '连接失败',
@@ -1886,6 +1923,7 @@ export const zhCN: TranslationMap = {
   'review.uncommitted': '未提交改动',
   'review.noChanges': '没有未提交的改动',
   'review.loading': '正在加载 git diff...',
+  'review.startFailed': '发起审查失败',
   'review.findings': '审查发现',
   'review.noFindings': '暂无审查结果',
   'review.modified': '已修改',

@@ -1,10 +1,15 @@
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, CancellationToken } from 'electron-updater'
 import { app, BrowserWindow, session } from 'electron'
 import { getStoreKey, readToolPrefs, setStoreKey } from './store'
 
 let initialized = false
 let activeCheck: Promise<void> | null = null
 let updateOperation: 'checking' | 'downloading' | null = null
+/** Token for the in-flight background download — cancel() aborts it (C20). */
+let downloadCancelToken: CancellationToken | null = null
+/** Set while a cancel is in progress so the 'error' event isn't shown as a failure. */
+let suppressingDownloadError = false
+let mainWindowRef: BrowserWindow | null = null
 const BETA_UPDATE_URL = 'https://github.com/godsir/openloom/releases/download/beta'
 
 type ProxyPreferences = {
@@ -86,6 +91,7 @@ function configureUpdater(): void {
 export function setupAutoUpdater(mainWindow: BrowserWindow): void {
   if (initialized) return
   initialized = true
+  mainWindowRef = mainWindow
 
   configureUpdater()
 
@@ -109,8 +115,9 @@ export function setupAutoUpdater(mainWindow: BrowserWindow): void {
     console.error('[updater] error:', err.message)
     // Network failures while polling for updates are not failed installations.
     // Only surface download errors in the update UI; check failures remain
-    // logged and can be retried from Settings.
-    if (updateOperation === 'downloading') {
+    // logged and can be retried from Settings. A user-initiated cancel is
+    // suppressed here — it's reported via 'update-download-cancelled' instead.
+    if (updateOperation === 'downloading' && !suppressingDownloadError) {
       mainWindow.webContents.send('update-error', err.message)
     }
   })
@@ -150,11 +157,32 @@ export async function checkForUpdates(): Promise<void> {
 export async function downloadUpdate(): Promise<void> {
   await configureUpdaterProxy()
   updateOperation = 'downloading'
+  suppressingDownloadError = false
+  const token = new CancellationToken()
+  downloadCancelToken = token
   try {
-    await autoUpdater.downloadUpdate()
+    await autoUpdater.downloadUpdate(token)
+  } catch (err) {
+    // Cancelling aborts the download and rejects the promise. That's expected,
+    // not a failure — the renderer already got 'update-download-cancelled'.
+    if (token.cancelled) {
+      return
+    }
+    throw err
   } finally {
+    if (downloadCancelToken === token) downloadCancelToken = null
     if (updateOperation === 'downloading') updateOperation = null
   }
+}
+
+/** Abort an in-flight background download (C20). No-op if nothing is downloading. */
+export function cancelDownloadUpdate(): void {
+  if (!downloadCancelToken) return
+  suppressingDownloadError = true
+  downloadCancelToken.cancel()
+  downloadCancelToken = null
+  if (updateOperation === 'downloading') updateOperation = null
+  mainWindowRef?.webContents.send('update-download-cancelled')
 }
 
 export function installUpdate(): void {

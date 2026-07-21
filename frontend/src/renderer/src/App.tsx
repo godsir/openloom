@@ -135,6 +135,9 @@ export default function App() {
     disposers.push(window.loom.onUpdateDownloaded(() => {
       useStore.getState().onAutoUpdateDownloaded()
     }))
+    disposers.push(window.loom.onUpdateDownloadCancelled(() => {
+      useStore.getState().onAutoDownloadCancelled()
+    }))
     disposers.push(window.loom.onUpdateError((msg: string) => {
       useStore.getState().onAutoUpdateError(msg)
     }))

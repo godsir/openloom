@@ -36,14 +36,17 @@ export default function ContextMenu({ open, x, y, onClose, children }: ContextMe
       }
     }
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    // Small delay so the same click that opened it doesn't close it
+    // Small delay so the same click that opened it doesn't close it.
+    // 用 pointerdown 而非 click：在另一条目上右键触发的是 contextmenu 而非 click，
+    // 只听 click 会让旧菜单不关闭、屏幕上叠加两个右键菜单。pointerdown 对左/右键
+    // 都触发，可在打开新菜单前关闭旧菜单（菜单项在 menuRef 内，不受影响）。
     const id = setTimeout(() => {
-      window.addEventListener('click', handle)
+      window.addEventListener('pointerdown', handle)
       window.addEventListener('keydown', handleKey)
     }, 0)
     return () => {
       clearTimeout(id)
-      window.removeEventListener('click', handle)
+      window.removeEventListener('pointerdown', handle)
       window.removeEventListener('keydown', handleKey)
     }
   }, [open, onClose])

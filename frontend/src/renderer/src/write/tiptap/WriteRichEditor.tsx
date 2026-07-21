@@ -56,10 +56,13 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
         useWriteStore.getState().setSelection(null);
         return;
       }
-      // Compute 0-based line numbers from text offsets
-      const docText = ed.state.doc.textBetween(0, ed.state.doc.content.size);
-      const lineFrom = docText.slice(0, from).split('\n').length - 1;
-      const lineTo = docText.slice(0, to).split('\n').length - 1;
+      // from/to 是 ProseMirror 位置（含节点边界计数），不能直接当作扁平文本偏移去
+      // slice（旧实现导致行号恒为 0）。用 textBetween 的 blockSeparator 把"from 之前
+      // 的文本"一致地取出来再数换行，from/to 同口径，行号才有意义（A2）。
+      const textBeforeFrom = ed.state.doc.textBetween(0, from, '\n\n', '\n');
+      const textBeforeTo = ed.state.doc.textBetween(0, to, '\n\n', '\n');
+      const lineFrom = textBeforeFrom.split('\n').length - 1;
+      const lineTo = textBeforeTo.split('\n').length - 1;
       useWriteStore.getState().setSelection({
         text,
         from,

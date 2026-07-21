@@ -9,18 +9,19 @@ canvas{display:block;flex-shrink:0;pointer-events:auto}
 
 /* Bubble — positioned relative to wrapper, above canvas */
 #bubble {
-  display:none; position:absolute; bottom:calc(100% + 2px); left:50%;
+  display:block; opacity:0; position:absolute; bottom:calc(100% + 2px); left:50%;
   transform:translateX(-50%); background:rgba(0,0,0,0.82); color:#fff;
   padding:5px 10px; border-radius:8px; font-size:11px;
   white-space:nowrap; pointer-events:none; z-index:10;
   font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+  transition:opacity .25s ease;
 }
 #bubble::after {
   content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
   width:0; height:0; border:5px solid transparent;
   border-top-color:rgba(0,0,0,0.82);
 }
-#bubble.show{display:block}
+#bubble.show{opacity:1}
 </style>
 </head><body>
 <div id="wrapper">
@@ -451,7 +452,7 @@ canvas.addEventListener('click', function(e) {
 var startX = 0, startY = 0;
 
 canvas.addEventListener('mousedown', function(e) {
-  if (e.button === 0) { dragging = true; dragX = startX = e.screenX; dragY = startY = e.screenY; bumpActivity(); }
+  if (e.button === 0) { dragging = true; dragX = startX = e.screenX; dragY = startY = e.screenY; canvas.style.cursor='grabbing'; bumpActivity(); }
 });
 document.addEventListener('mousemove', function(e) {
   if (!dragging) return;
@@ -557,7 +558,7 @@ function startIdleTimer() {
 }
 
 document.addEventListener('mouseup', function() {
-  if (dragging && dragX === startX && dragY === startY && !(dndMode && unlockActive)) {
+  if (dragging && Math.abs(dragX - startX) <= 3 && Math.abs(dragY - startY) <= 3 && !(dndMode && unlockActive)) {
     bumpActivity();
     lastBreakReminder = Date.now();
     var line = CLICK_LINES[Math.floor(Math.random() * CLICK_LINES.length)];
@@ -567,6 +568,7 @@ document.addEventListener('mouseup', function() {
     if (clickReturnTimer) clearTimeout(clickReturnTimer);
     clickReturnTimer = setTimeout(function() { currentState = 'idle'; frame = 0; tick = 0; }, 2500);
   }
+  canvas.style.cursor='';
   dragging = false;
 });
 

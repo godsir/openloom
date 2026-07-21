@@ -3,7 +3,6 @@ import { useLocale } from '../../i18n'
 import { useRef, useEffect, useMemo, useCallback, useState } from 'react'
 import AssistantMessage from './AssistantMessage'
 import UserMessage from './UserMessage'
-import ImageLightbox from '../shared/ImageLightbox'
 import ChatTimelineNavigator from './ChatTimelineNavigator'
 import ReviewPanel from './ReviewPanel'
 import { buildTimelineAnchors } from './timeline-anchors'
@@ -22,6 +21,10 @@ export default function ChatArea() {
   }, [sessionId, messagesBySession])
   const streamingIds = useStore(s => s.streamingSessionIds)
   const isStreaming = sessionId ? streamingIds.has(sessionId) : false
+  // 切会话后历史消息加载中的标志：此间展示 skeleton 而非"空会话"引导页，
+  // 避免内容"啪"地替换出来的误导。
+  const messagesLoading = useStore(s => s.messagesLoading)
+  const switchSession = useStore(s => s.switchSession)
   const inlineErrors = useStore(s => s.inlineErrors)
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -32,9 +35,7 @@ export default function ChatArea() {
   const msgCount = messages.length
 
   const timelineAnchors = useMemo(() => buildTimelineAnchors(messages as any[]), [msgCount])
-  const lightboxSrc = useStore(s => s.lightbox.lightboxSrc)
   const openLightbox = useStore(s => s.openLightbox)
-  const closeLightbox = useStore(s => s.closeLightbox)
   const { t } = useLocale()
 
   // Auto-scroll to bottom on new messages when at bottom.
@@ -98,7 +99,15 @@ export default function ChatArea() {
         return
       }
       if (img.complete && img.naturalWidth > 0 && img.src) {
-        openLightbox(img.src)
+        // 收集聊天区内全部可见图片，打开时传入整组，灯箱内可用 ←/→ 切换
+        const container = scrollRef.current
+        const imgs = container
+          ? Array.from(container.querySelectorAll('img')).filter(
+              i => i.naturalWidth >= 20 && i.src && !i.getAttribute('data-blocked-src'))
+          : [img]
+        const list = imgs.map(i => i.src)
+        const index = Math.max(0, list.indexOf(img.src))
+        openLightbox(img.src, list, index)
       }
     }
     document.addEventListener('click', docHandler, true)
@@ -107,7 +116,13 @@ export default function ChatArea() {
 
   return (
     <div className={styles.chatWrapper}>
-      {messages.length === 0 && !isStreaming ? (
+      {messages.length === 0 && !isStreaming && messagesLoading ? (
+        <div className={styles.skeletonList} aria-busy="true">
+          <div className={styles.skeletonMsg} />
+          <div className={styles.skeletonMsg} />
+          <div className={styles.skeletonMsg} />
+        </div>
+      ) : messages.length === 0 && !isStreaming ? (
         <div className={styles.emptyState}>
           <div className={styles.emptyContent}>
             <div className={styles.emptyLogo}>
@@ -140,7 +155,14 @@ export default function ChatArea() {
           {error && (
             <div className={styles.errorBlock}>
               <span className={styles.errorIcon}>!</span>
-              <span>{error}</span>
+              <span className={styles.errorText}>{error}</span>
+              {/* 错误不再是"终点"：给出重试入口，重新拉取当前会话 */}
+              <button
+                className={styles.errorRetry}
+                onClick={() => { if (sessionId) switchSession(sessionId) }}
+              >
+                {t('common.retry')}
+              </button>
             </div>
           )}
         </div>
@@ -151,7 +173,6 @@ export default function ChatArea() {
           <IconChevronDown size={16} />
         </button>
       )}
-      <ImageLightbox src={lightboxSrc} onClose={closeLightbox} />
       <ReviewPanel />
     </div>
   )

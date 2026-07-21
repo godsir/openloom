@@ -118,8 +118,14 @@ async fn exec_cron(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(300)
                 .min(3600);
+            // Optional per-job model override (empty/absent = active model).
+            let model = args
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
             let id = scheduler
-                .add_job(name, cron_expr, prompt, session_mode, timeout_secs)
+                .add_job(name, cron_expr, prompt, session_mode, timeout_secs, model)
                 .await?;
             Ok(format!("Cron job \"{name}\" created (id: {id})."))
         }
@@ -141,8 +147,16 @@ async fn exec_cron(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(existing.timeout_secs)
                 .min(3600);
+            let model = if args.get("model").is_some() {
+                args.get("model")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            } else {
+                existing.model
+            };
             scheduler
-                .update_job(id, name, cron_expr, prompt, session_mode, timeout_secs)
+                .update_job(id, name, cron_expr, prompt, session_mode, timeout_secs, model)
                 .await?;
             Ok(format!("Cron job \"{name}\" updated."))
         }

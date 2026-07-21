@@ -31,7 +31,30 @@ interface GraphNode {
   color: string
 }
 
-export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialSubTab?: 'list' | 'graph' }) {
+export type KgScopeFilter = 'all' | 'global' | 'session'
+
+export interface KnowledgeGraphTabProps {
+  initialSubTab?: 'list' | 'graph'
+  onRequestGraphView?: () => void
+  // 列表搜索态上提到 KnowledgeGraphPanel，切换主 tab 时不丢失搜索条件（B20.1）
+  query: string
+  setQuery: (q: string) => void
+  scopeFilter: KgScopeFilter
+  setScopeFilter: (s: KgScopeFilter) => void
+  searchActive: boolean
+  setSearchActive: (v: boolean) => void
+}
+
+export default function KnowledgeGraphTab({
+  initialSubTab = 'list',
+  onRequestGraphView,
+  query,
+  setQuery,
+  scopeFilter,
+  setScopeFilter,
+  searchActive,
+  setSearchActive,
+}: KnowledgeGraphTabProps) {
   const { t } = useLocale()
   const kgStats = useStore(s => s.kgStats)
   const kgSearchResults = useStore(s => s.kgSearchResults)
@@ -48,14 +71,16 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   const showConfirm = useStore(s => s.showConfirm)
   const currentSessionId = useStore(s => s.currentSessionId)
 
-  const [query, setQuery] = useState('')
-  const [scopeFilter, setScopeFilter] = useState<'all' | 'global' | 'session'>('all')
   const [tooltip, setTooltip] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [activeTab] = useState<'list' | 'graph'>(initialSubTab)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showLabels, setShowLabels] = useState(true)
   const [listPage, setListPage] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
+  // expand/walk 异步操作进行中标志：防止连点、给出加载反馈（B16）
+  const [graphOpBusy, setGraphOpBusy] = useState(false)
+  // 搜索进行中的瞬态标志（瞬态，无需上提）
+  const [searching, setSearching] = useState(false)
 
   const chartWrapRef = useRef<HTMLDivElement>(null)
   const fullscreenWrapRef = useRef<HTMLDivElement>(null)
@@ -65,11 +90,17 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   const userClearedGraph = useRef(false)
 
   const entityTypeCn = useCallback((type: string): string => {
-    return t(`kg.entityType.${type}`) ?? type
+    // t() 缺失键时返回键名本身而非 null，`?? type` 永远不生效；改为检测返回值
+    // 是否等于键名来兜底，未注册类型回退显示原始 type（B10）
+    const key = `kg.entityType.${type}`
+    const res = t(key)
+    return res === key ? type : res
   }, [t])
 
   const translateRelation = useCallback((rel: string): string => {
-    return t(`kg.relation.${rel}`) ?? rel.replace(/_/g, ' ')
+    const key = `kg.relation.${rel}`
+    const res = t(key)
+    return res === key ? rel.replace(/_/g, ' ') : res
   }, [t])
 
   useEffect(() => {
@@ -139,9 +170,19 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
     return () => ro.disconnect()
   }, [activeTab])
 
-  const handleSearch = useCallback(() => {
-    if (!query.trim()) return
-    kgSearch(query.trim())
+  const handleSearch = useCallback(async () => {
+    const q = query.trim()
+    if (!q) {
+      setSearchActive(false)
+      return
+    }
+    setSearchActive(true)
+    setSearching(true)
+    try {
+      await kgSearch(q)
+    } finally {
+      setSearching(false)
+    }
   }, [query, kgSearch])
 
   const handleKeyDown = useCallback(
@@ -152,27 +193,42 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
   )
 
   const handleExpand = useCallback(
-    (name: string) => {
+    async (name: string) => {
+      if (graphOpBusy) return
       userClearedGraph.current = false
       setTooltip(null)
       const effectiveScope = scopeFilter === 'all' ? undefined
         : scopeFilter === 'session' ? (currentSessionId ?? undefined)
         : scopeFilter
-      kgExpandNode(name, effectiveScope)
+      setGraphOpBusy(true)
+      try {
+        await kgExpandNode(name, effectiveScope)
+      } finally {
+        setGraphOpBusy(false)
+      }
+      // 从列表点"查看关联"时自动切到图谱视图，否则用户看不到结果（B2）
+      onRequestGraphView?.()
     },
-    [kgExpandNode, scopeFilter, currentSessionId],
+    [graphOpBusy, kgExpandNode, scopeFilter, currentSessionId, onRequestGraphView],
   )
 
   const handleWalk = useCallback(
-    (name: string) => {
+    async (name: string) => {
+      if (graphOpBusy) return
       userClearedGraph.current = false
       setTooltip(null)
       const effectiveScope = scopeFilter === 'all' ? undefined
         : scopeFilter === 'session' ? (currentSessionId ?? undefined)
         : scopeFilter
-      kgWalkFrom(name, 2, effectiveScope)
+      setGraphOpBusy(true)
+      try {
+        await kgWalkFrom(name, 2, effectiveScope)
+      } finally {
+        setGraphOpBusy(false)
+      }
+      onRequestGraphView?.()
     },
-    [kgWalkFrom, scopeFilter, currentSessionId],
+    [graphOpBusy, kgWalkFrom, scopeFilter, currentSessionId, onRequestGraphView],
   )
 
   const handleDeleteNode = useCallback(
@@ -209,14 +265,22 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
 
   const handleDeleteEdge = useCallback(
     async (source: string, target: string, relation: string) => {
+      // 删除关系前确认，避免误点 x 直接丢数据（B20）
+      const ok = await showConfirm(
+        t('kg.deleteRelation'),
+        t('kg.deleteRelationConfirm', { source, target }),
+        true,
+      )
+      if (!ok) return
       kgEdgeDelete(source, target, relation)
     },
-    [kgEdgeDelete],
+    [kgEdgeDelete, showConfirm, t],
   )
 
   const hasData = !!(kgGraph && kgGraph.nodes.length > 0)
-  // search results overlay on top of node list; clear when query is empty
-  const displayNodes = query && kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
+  // 搜索已执行时以搜索结果为准（空结果 → "无匹配"提示）；未搜索时才回退全量列表（B9）
+  const displayNodes = searchActive ? kgSearchResults : kgNodeList
+  const noMatch = searchActive && !searching && kgSearchResults.length === 0
 
   // ── Pagination ──
   const totalPages = Math.max(1, Math.ceil(displayNodes.length / PAGE_SIZE))
@@ -238,7 +302,10 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
             <input
               className={styles.searchInput}
               value={query}
-              onChange={e => setQuery(e.target.value)}
+              onChange={e => {
+                setQuery(e.target.value)
+                if (!e.target.value.trim()) setSearchActive(false)
+              }}
               onKeyDown={handleKeyDown}
               placeholder={t('kg.filterPlaceholder')}
             />
@@ -291,7 +358,7 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
         <div className={styles.nodeList}>
           {displayNodes.length === 0 ? (
             <div className={styles.canvasEmpty}>
-              {t('kg.emptyEntityList')}
+              {searching ? t('common.loading') : noMatch ? t('kg.noSearchMatch') : t('kg.emptyEntityList')}
             </div>
           ) : (
             <>
@@ -317,8 +384,8 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
                       </span>
                     </div>
                     <div className={styles.nodeItemActions}>
-                      <button className={styles.actionBtn} onClick={() => handleExpand(n.name)}>{t('kg.viewRelated')}</button>
-                      <button className={styles.actionBtn} onClick={() => handleWalk(n.name)}>{t('kg.expandNetwork')}</button>
+                      <button className={styles.actionBtn} disabled={graphOpBusy} onClick={() => handleExpand(n.name)}>{t('kg.viewRelated')}</button>
+                      <button className={styles.actionBtn} disabled={graphOpBusy} onClick={() => handleWalk(n.name)}>{t('kg.expandNetwork')}</button>
                       <span className={styles.actionDivider} />
                       <button className={styles.actionBtnDanger} onClick={() => handleDeleteNode(n.name)}>{t('common.delete')}</button>
                     </div>
@@ -427,10 +494,10 @@ export default function KnowledgeGraphTab({ initialSubTab = 'list' }: { initialS
             {t('kg.confidence')} {(tooltip.node.confidence * 100).toFixed(0)}%
           </div>
           <div className={styles.tooltipActions}>
-            <button className={styles.tooltipBtn} onClick={() => handleExpand(tooltip.node.name)}>
+            <button className={styles.tooltipBtn} disabled={graphOpBusy} onClick={() => handleExpand(tooltip.node.name)}>
               {t('kg.viewRelated')}
             </button>
-            <button className={styles.tooltipBtn} onClick={() => handleWalk(tooltip.node.name)}>
+            <button className={styles.tooltipBtn} disabled={graphOpBusy} onClick={() => handleWalk(tooltip.node.name)}>
               {t('kg.expandNetwork')}
             </button>
             <button className={styles.tooltipBtn} onClick={() => setTooltip(null)}>

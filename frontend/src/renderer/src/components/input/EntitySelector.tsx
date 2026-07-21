@@ -1,12 +1,19 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
 import { IconBot, IconUsers, IconChevronDown, IconCheck } from '../../utils/icons'
+import { useMenuKeyboard, useClickOutside } from '../shared/menu-hooks'
 import styles from './EntitySelector.module.css'
 
 type TabId = 'agent' | 'team'
+
+// 键盘导航用的统一条目模型：default 项 + 各 agent，或各 team
+type NavItem =
+  | { kind: 'default' }
+  | { kind: 'agent'; name: string }
+  | { kind: 'team'; id: string }
 
 export default function EntitySelector() {
   const { t } = useLocale()
@@ -19,20 +26,25 @@ export default function EntitySelector() {
 
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<TabId>(teamBindingId ? 'team' : 'agent')
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [teamsLoading, setTeamsLoading] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([])
 
   // Load teams on mount (like agents are loaded by AgentConfigPanel)
   useEffect(() => {
+    setTeamsLoading(true)
     loomRpc<{ teams: { id: string; name: string; description: string; strategy: string; captain: unknown; members: unknown[] }[] }>('team.config.list')
       .then((r) => useStore.getState().setTeams((r.teams || []) as any))
       .catch(() => {})
+      .finally(() => setTeamsLoading(false))
   }, [])
 
   // Determine which entity is currently active for the trigger label.
   // Team takes priority: when a team is selected, agent binding is reset to 'default'.
   const activeTeam = teamBindingId
-    ? teams.find((t) => t.id === teamBindingId)
+    ? teams.find((tm) => tm.id === teamBindingId)
     : undefined
   const activeAgent = agentBindingName && agentBindingName !== 'default'
     ? agents.find((a) => a.name === agentBindingName)
@@ -46,26 +58,29 @@ export default function EntitySelector() {
 
   const hasActiveBinding = !!activeAgent || !!activeTeam
 
-  // Close popover on outside click
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (triggerRef.current?.contains(target)) return
-      if (popoverRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const timer = setTimeout(
-      () => document.addEventListener('mousedown', handler),
-      0,
-    )
-    return () => {
-      clearTimeout(timer)
-      document.removeEventListener('mousedown', handler)
-    }
-  }, [open])
+  const validAgents = useMemo(
+    () => agents.filter((a) => a.name && a.name !== 'default' && !a.name.startsWith('__team_')),
+    [agents],
+  )
 
-  const validAgents = agents.filter((a) => a.name && a.name !== 'default' && !a.name.startsWith('__team_'))
+  // 当前 tab 的可导航条目（供键盘 ↑/↓/Enter 使用）
+  const navItems = useMemo<NavItem[]>(() => {
+    if (tab === 'agent') {
+      return [
+        { kind: 'default' },
+        ...validAgents.map((a): NavItem => ({ kind: 'agent', name: a.name })),
+      ]
+    }
+    return teams.map((tm): NavItem => ({ kind: 'team', id: tm.id }))
+  }, [tab, validAgents, teams])
+
+  // 点击外部关闭（统一 hook）
+  useClickOutside(
+    (target) =>
+      !!triggerRef.current?.contains(target) || !!popoverRef.current?.contains(target),
+    () => setOpen(false),
+    open,
+  )
 
   const handleSelectAgent = useCallback(
     (name: string) => {
@@ -97,6 +112,36 @@ export default function EntitySelector() {
     [currentSessionId],
   )
 
+  const selectItem = useCallback(
+    (i: number) => {
+      const item = navItems[i]
+      if (!item) return
+      if (item.kind === 'default') handleSelectAgent('')
+      else if (item.kind === 'agent') handleSelectAgent(item.name)
+      else handleSelectTeam(item.id)
+    },
+    [navItems, handleSelectAgent, handleSelectTeam],
+  )
+
+  // 键盘导航（仅当前 tab 的列表参与）
+  useMenuKeyboard({
+    open: open && navItems.length > 0,
+    itemCount: navItems.length,
+    activeIndex,
+    setActiveIndex,
+    onSelect: selectItem,
+    onClose: () => setOpen(false),
+  })
+
+  // 打开或切换 tab 时复位高亮；移动时滚入可视区
+  useEffect(() => {
+    if (open) setActiveIndex(0)
+  }, [open, tab])
+  useEffect(() => {
+    if (!open) return
+    itemRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [open, activeIndex])
+
   const handleOpenSettings = useCallback(() => {
     setOpen(false)
     useStore.getState().setAppMode('settings')
@@ -127,17 +172,32 @@ export default function EntitySelector() {
     return pos
   }, [])
 
+  const isItemActive = (item: NavItem): boolean => {
+    if (item.kind === 'default') return !agentBindingName || agentBindingName === 'default'
+    if (item.kind === 'agent') return agentBindingName === item.name
+    return teamBindingId === item.id
+  }
+
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(!open)}
-        className={`${styles.trigger} ${hasActiveBinding ? styles.triggerActive : ''}`}
+        className={[
+          styles.trigger,
+          hasActiveBinding ? styles.triggerActive : '',
+          open ? styles.triggerOpen : '',
+        ].filter(Boolean).join(' ')}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={t('entity.selectorLabel', { name: triggerLabel })}
       >
         <IconBot size={12} />
         <span className={styles.triggerLabel}>{triggerLabel}</span>
-        <IconChevronDown size={8} />
+        <span className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`}>
+          <IconChevronDown size={8} />
+        </span>
       </button>
 
       {open &&
@@ -146,10 +206,14 @@ export default function EntitySelector() {
             ref={popoverRef}
             style={getPopoverStyle()}
             className={styles.popover}
+            role="listbox"
+            aria-label={t('entity.selectorLabel', { name: triggerLabel })}
           >
             {/* Tabs */}
-            <div className={styles.tabs}>
+            <div className={styles.tabs} role="tablist">
               <button
+                role="tab"
+                aria-selected={tab === 'agent'}
                 className={`${styles.tab} ${tab === 'agent' ? styles.tabActive : ''}`}
                 onClick={() => setTab('agent')}
               >
@@ -157,6 +221,8 @@ export default function EntitySelector() {
                 {t('entity.agentTab')}
               </button>
               <button
+                role="tab"
+                aria-selected={tab === 'team'}
                 className={`${styles.tab} ${tab === 'team' ? styles.tabActive : ''}`}
                 onClick={() => setTab('team')}
               >
@@ -168,27 +234,28 @@ export default function EntitySelector() {
             {/* Agent list */}
             {tab === 'agent' && (
               <div className={styles.list}>
-                <div
-                  className={`${styles.item} ${!agentBindingName || agentBindingName === 'default' ? styles.itemActive : ''}`}
-                  onClick={() => handleSelectAgent('')}
-                >
-                  <span className={styles.itemLabel}>{t('input.defaultAgent')}</span>
-                  {(!agentBindingName || agentBindingName === 'default') && (
-                    <IconCheck size={12} className={styles.check} />
-                  )}
-                </div>
-                {validAgents.map((a) => (
-                  <div
-                    key={a.name}
-                    className={`${styles.item} ${agentBindingName === a.name ? styles.itemActive : ''}`}
-                    onClick={() => handleSelectAgent(a.name)}
-                  >
-                    <span className={styles.itemLabel}>{a.name}</span>
-                    {agentBindingName === a.name && (
-                      <IconCheck size={12} className={styles.check} />
-                    )}
-                  </div>
-                ))}
+                {navItems.map((item, i) => {
+                  const label = item.kind === 'default' ? t('input.defaultAgent') : (item as { name: string }).name
+                  const selected = isItemActive(item)
+                  return (
+                    <div
+                      key={item.kind === 'default' ? '__default__' : (item as { name: string }).name}
+                      ref={(el) => { itemRefs.current[i] = el }}
+                      role="option"
+                      aria-selected={selected}
+                      onMouseEnter={() => setActiveIndex(i)}
+                      onClick={() => selectItem(i)}
+                      className={[
+                        styles.item,
+                        selected ? styles.itemActive : '',
+                        i === activeIndex && !selected ? styles.itemHighlight : '',
+                      ].filter(Boolean).join(' ')}
+                    >
+                      <span className={styles.itemLabel}>{label}</span>
+                      {selected && <IconCheck size={12} className={styles.check} />}
+                    </div>
+                  )
+                })}
                 {validAgents.length === 0 && (
                   <div className={styles.empty}>{t('entity.noAgents')}</div>
                 )}
@@ -198,19 +265,37 @@ export default function EntitySelector() {
             {/* Team list */}
             {tab === 'team' && (
               <div className={styles.list}>
-                {teams.map((tm) => (
-                  <div
-                    key={tm.id}
-                    className={`${styles.item} ${teamBindingId === tm.id ? styles.itemActive : ''}`}
-                    onClick={() => handleSelectTeam(tm.id)}
-                  >
-                    <span className={styles.itemLabel}>{tm.name}</span>
-                    {teamBindingId === tm.id && (
-                      <IconCheck size={12} className={styles.check} />
-                    )}
+                {teamsLoading ? (
+                  <div className={styles.empty}>
+                    <span className={styles.spinner} aria-hidden="true" />
+                    {t('common.loading')}
                   </div>
-                ))}
-                {teams.length === 0 && (
+                ) : (
+                  navItems.map((item, i) => {
+                    const tm = teams[i]
+                    if (!tm) return null
+                    const selected = isItemActive(item)
+                    return (
+                      <div
+                        key={tm.id}
+                        ref={(el) => { itemRefs.current[i] = el }}
+                        role="option"
+                        aria-selected={selected}
+                        onMouseEnter={() => setActiveIndex(i)}
+                        onClick={() => selectItem(i)}
+                        className={[
+                          styles.item,
+                          selected ? styles.itemActive : '',
+                          i === activeIndex && !selected ? styles.itemHighlight : '',
+                        ].filter(Boolean).join(' ')}
+                      >
+                        <span className={styles.itemLabel}>{tm.name}</span>
+                        {selected && <IconCheck size={12} className={styles.check} />}
+                      </div>
+                    )
+                  })
+                )}
+                {!teamsLoading && teams.length === 0 && (
                   <div className={styles.empty}>{t('entity.noTeams')}</div>
                 )}
               </div>

@@ -66,10 +66,10 @@
   cursor: not-allowed;
 }
 
+/* 图标按钮：复用 .btn 基础样式（边框/背景/hover/过渡），否则新建、保存键
+   会退化成无边框无反馈的裸按钮（A19） */
 .btnIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  composes: btn;
   width: 28px;
   padding: 0;
 }

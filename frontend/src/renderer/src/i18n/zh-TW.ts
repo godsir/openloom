@@ -4,6 +4,7 @@ export const zhTW: TranslationMap = {
   // ── Common ──────────────────────────────────────────────────────
   'common.save': '儲存',
   'common.cancel': '取消',
+  'common.removeQuote': '移除引用',
   'common.delete': '刪除',
   'common.confirm': '確認',
   'common.close': '關閉',
@@ -50,6 +51,11 @@ export const zhTW: TranslationMap = {
   'common.imageHint': '滚轮缩放 · 拖拽移动 · 双擊重設 · Esc 關閉',
   'common.copyImage': '复制圖片',
   'common.saveImage': '儲存圖片',
+  'common.imageCopied': '已複製圖片',
+  'common.imageUrlCopied': '已複製圖片連結',
+  'common.imageLoading': '圖片載入中…',
+  'common.prevImage': '上一張',
+  'common.nextImage': '下一張',
   'common.openFile': '開啟檔案',
   'common.clickToLoadImage': '點擊載入遠端圖片',
 
@@ -99,6 +105,7 @@ export const zhTW: TranslationMap = {
   'island.configSaved': '設定已儲存',
   'island.extracting': '記憶提取中',
   'island.extractingHint': '從對話中提取記憶節點',
+  'island.andMore': '…及另外 {n} 項',
 
   // ── Sidebar ─────────────────────────────────────────────────────
   'sidebar.sessions': '對話',
@@ -198,8 +205,10 @@ export const zhTW: TranslationMap = {
 
   // ── Plan & Todo ──────────────────────────────────────────────────
   'todo.panelTitle': '待辦',
+  'todo.count': '{n} 項',
   'todo.empty': '暫無待辦事項',
   'todo.emptyHint': '在對話中使用 /plan 建立計劃，AI 會自動生成任務列表',
+  'todo.toggleFailed': '更新待辦狀態失敗',
   'todo.pending': '待處理',
   'todo.inProgress': '進行中',
   'todo.completed': '已完成',
@@ -207,6 +216,19 @@ export const zhTW: TranslationMap = {
   'todo.markPending': '標記為待處理',
   'todo.markInProgress': '標記為進行中',
   'todo.markCompleted': '標記為已完成',
+
+  // ── Plan Panel ───────────────────────────────────────────────────
+  'plan.title': '計劃',
+  'plan.empty': '暫無計劃',
+  'plan.emptyHint': '在對話中輸入 /plan 你的想法 即可建立計劃',
+  'plan.selectPlan': '選擇一個計劃：',
+  'plan.placeholder': '計劃內容將顯示在這裡...',
+  'plan.saveFailed': '計劃儲存失敗',
+  'plan.status.drafting': '草稿',
+  'plan.status.ready': '就緒',
+  'plan.status.building': '建置中',
+  'plan.status.completed': '已完成',
+  'plan.status.error': '出錯',
 
   // ── Slash Commands ────────────────────────────────────────────────
   'slash.builtinCommands': '內置命令',
@@ -252,6 +274,9 @@ export const zhTW: TranslationMap = {
   'input.sessionCacheHit': '對話累计快取命中',
   'input.sessionCost': '對話累计消耗',
   'input.model': '模型',
+  'model.loadFailed': '模型清單載入失敗',
+  'model.switchFailed': '模型切換失敗',
+  'model.empty': '暫無可用模型',
   'input.noMatchingFiles': '无匹配檔案',
   'input.searchFiles': '輸入檔案名搜尋...',
   'input.explainCode': '解释这段程式碼...',
@@ -274,6 +299,14 @@ export const zhTW: TranslationMap = {
   'input.defaultAgent': '預設 Agent',
   'input.permissionTitle': '權限: {mode}',
   'input.thinkingTitle': '思考: {level}',
+
+  // ── Entity Selector ──────────────────────────────────────────────
+  'entity.selectorLabel': '選擇執行個體（當前：{name}）',
+  'entity.agentTab': 'Agent',
+  'entity.teamTab': '專家團',
+  'entity.noAgents': '暫無 Agent 配置',
+  'entity.noTeams': '暫無專家團配置',
+  'entity.manageInSettings': '在設定中管理',
 
   // ── Git ──────────────────────────────────────────────────────────
   'git.branchUnavailable': '未檢測到 Git',
@@ -443,6 +476,10 @@ export const zhTW: TranslationMap = {
   'kg.exitFullscreen': '退出全屏',
   'kg.refreshGraph': '刷新图谱',
   'kg.emptyEntityList': '暫無實體。知識圖譜会在与 AI 對話过程中自动积累。',
+  'kg.searchFailed': '知識圖譜搜尋失敗',
+  'kg.loadFailed': '知識圖譜載入失敗',
+  'kg.noSearchMatch': '找不到符合的實體',
+  'kg.deleteRelationConfirm': '確定要刪除「{source}」與「{target}」之間的關係嗎？',
   'kg.confidence': '确信',
   'kg.confidenceTooltip': 'AI 对该實體資訊的把握程度',
   'kg.viewRelated': '查看关联',
@@ -835,6 +872,8 @@ export const zhTW: TranslationMap = {
   'write.exportHTML': '匯出 HTML',
   'write.exportPDF': '匯出 PDF',
   'write.exportDOCX': '匯出 DOCX',
+  'write.exportedOk': '已匯出 {format}',
+  'write.exportFailed': '匯出失敗',
   'write.settingsDefaultPreviewDesc': '選擇預設的預覽模式，所見即所得適合寫作，即時適合程式碼',
   'write.settingsAutoSaveIntervalDesc': '啟用自動保存後，AI 寫作助手會定期保存你的工作進度，防止數據丟失。建議設置為 900 ms（9 秒）或更長時間，以平衡性能和數據安全。',
 
@@ -909,6 +948,8 @@ export const zhTW: TranslationMap = {
   // ── Updates ─────────────────────────────────────────────────────
   'updates.checkFailed': '檢查更新失敗',
   'updates.downloadFailed': '下載失敗',
+  'updates.cancelDownload': '取消下載',
+  'updates.backgroundStarted': '已開始背景下載，進度見靈動島',
 
   // ── Pet / Tray ──────────────────────────────────────────────────
   'pet.leaving': '我走了',
@@ -1641,6 +1682,8 @@ export const zhTW: TranslationMap = {
   'software.resetToDefault': '恢复預設大小',
   'software.resetToDefaultDesc': '將字型大小和介面/程式碼字型恢复為預設值',
   'software.resetComplete': '已恢复預設字型大小',
+  'software.resetConfirmTitle': '恢復預設設定',
+  'software.resetConfirmMessage': '將把字型大小、介面字型、程式碼字型和縮放比例全部恢復為預設值，確定要繼續嗎？',
 
   // ── Token Tab ───────────────────────────────────────────────────
   'token.title': 'Token 用量',
@@ -1766,6 +1809,7 @@ export const zhTW: TranslationMap = {
   'im.wechatConfigHint': '微信通過掃碼連接，無需手動填寫憑證',
   'im.connectTestTitle': '連接測試',
   'im.testRunning': '正在測試...',
+  'im.testFailed': '連線檢測失敗',
   'im.verdictPass': '連接正常',
   'im.verdictWarn': '需要關注',
   'im.verdictFail': '連接失敗',
