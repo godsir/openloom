@@ -276,6 +276,8 @@ pub struct SpawnContext {
     pub event_bus: crate::event_bus::EventBus,
     pub subagent_max_iterations: usize,
     pub max_retries: usize,
+    /// Memory store — used to persist token usage for child agent / team member turns.
+    pub memory_store: Arc<RwLock<Option<Box<dyn crate::MemoryStore>>>>,
 }
 
 /// The spawn_agent tool allows an agent to delegate a subtask to a child agent.
@@ -317,7 +319,7 @@ impl AgentTool for SpawnAgentTool {
         &self,
         arguments: serde_json::Value,
         _progress: UnboundedSender<ToolProgress>,
-        _context: &ToolContext,
+        context: &ToolContext,
     ) -> Result<ToolResult> {
         let description = arguments["description"].as_str().unwrap_or("subtask");
         let prompt = arguments["prompt"].as_str().unwrap_or("");
@@ -479,6 +481,23 @@ impl AgentTool for SpawnAgentTool {
                 let _ = self.context.agent_pool.remove(&child_id).await;
                 tracing::info!(%description, tokens = turn.prompt_tokens + turn.completion_tokens, "sub-agent done");
 
+                // Record token usage for sub-agent turn
+                if turn.prompt_tokens > 0 || turn.completion_tokens > 0 {
+                    let mem = self.context.memory_store.read().await;
+                    if let Some(ref store) = *mem {
+                        let sid = context.session_id.as_deref().unwrap_or("subagent");
+                        let _ = store
+                            .record_token_usage(
+                                sid,
+                                &format!("subagent ({})", description),
+                                turn.prompt_tokens,
+                                turn.completion_tokens,
+                                0, 0, 0, 0,
+                            )
+                            .await;
+                    }
+                }
+
                 let sub_result = serde_json::json!({
                     "success": true,
                     "description": description,
@@ -630,6 +649,7 @@ impl AgentTool for SpawnAgentsTool {
                 let max_iters = subagent_max_iters.min(base.max_iterations);
                 let eb = self.context.event_bus.clone();
                 let tid = team_id.clone();
+                let capture_session_id = capture_session_id.clone();
                 let fwd_sid = capture_session_id.clone();
 
                 handles.push(tokio::spawn(async move {
@@ -709,6 +729,21 @@ impl AgentTool for SpawnAgentsTool {
                                 prompt_tokens: t.prompt_tokens,
                                 completion_tokens: t.completion_tokens,
                             });
+                            // Record token usage for team member turn
+                            if t.prompt_tokens > 0 || t.completion_tokens > 0 {
+                                let mem = ctx.memory_store.read().await;
+                                if let Some(ref store) = *mem {
+                                    let _ = store
+                                        .record_token_usage(
+                                            &capture_session_id,
+                                            &format!("{} (team_member: {})", "team", name),
+                                            t.prompt_tokens,
+                                            t.completion_tokens,
+                                            0, 0, 0, 0,
+                                        )
+                                        .await;
+                                }
+                            }
                             (i, name, if body.is_empty() { t.response } else { body }, false, t.prompt_tokens, t.completion_tokens)
                         }
                         Err(e) => (i, name, e.to_string(), true, 0usize, 0usize),

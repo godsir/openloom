@@ -1185,6 +1185,7 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
                 sandbox_config,
                 model_configs: self.model_configs.clone(),
                 key_store: self.key_store.clone(),
+                memory_store: self.memory_store.clone(),
             }))
             .await;
 
@@ -1324,6 +1325,7 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             event_bus: self.pool.event_bus().clone(),
             subagent_max_iterations: 20,
             max_retries: 2,
+            memory_store: self.memory_store.clone(),
         });
         let _ = self
             .tool_registry
@@ -2232,6 +2234,26 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
         let raw_title = response.text.trim().to_string();
         tracing::info!(session_id, raw_title = %raw_title, "auto_title: LLM returned");
 
+        // Record token usage for auto-title generation
+        if response.prompt_tokens > 0 || response.completion_tokens > 0 {
+            let model_name = self.active_model_name().await.unwrap_or_else(|| "auto_title".to_string());
+            let guard = self.memory_store.read().await;
+            if let Some(ref store) = *guard {
+                let _ = store
+                    .record_token_usage(
+                        session_id,
+                        &format!("{} (auto_title)", model_name),
+                        response.prompt_tokens,
+                        response.completion_tokens,
+                        0,
+                        0,
+                        0,
+                        0,
+                    )
+                    .await;
+            }
+        }
+
         // Strip surrounding quotes/brackets the model sometimes adds,
         // then keep only printable non-control characters, collapse whitespace.
         let stripped = raw_title
@@ -2840,7 +2862,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             temperature: 0.8,
             top_p: 1.0,
             stop: vec![],
-            stream: true,
+            stream: false,
             thinking_budget: None,
         };
 
@@ -2850,21 +2872,30 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()))
             .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
-        let handle = tokio::spawn(async move {
-            let mut text = String::new();
-            while let Some(token) = rx.recv().await {
-                text.push_str(&token);
+        let response = client.complete(request).await
+            .map_err(|e| anyhow::anyhow!("模型调用失败: {}. 请确认模型服务正常运行。", e))?;
+
+        let raw = response.text.trim().to_string();
+
+        // Record token usage for team member generation
+        if response.prompt_tokens > 0 || response.completion_tokens > 0 {
+            let model_name = self.active_model_name().await.unwrap_or_else(|| "team_generate".to_string());
+            let guard = self.memory_store.read().await;
+            if let Some(ref store) = *guard {
+                let _ = store
+                    .record_token_usage(
+                        "system",
+                        &format!("{} (team_generate)", model_name),
+                        response.prompt_tokens,
+                        response.completion_tokens,
+                        0,
+                        0,
+                        0,
+                        0,
+                    )
+                    .await;
             }
-            text
-        });
-
-        if let Err(e) = client.complete_stream(request, tx).await {
-            handle.abort();
-            anyhow::bail!("模型调用失败: {}. 请确认模型服务正常运行。", e);
         }
-
-        let raw = handle.await.unwrap_or_default().trim().to_string();
 
         if raw.is_empty() {
             anyhow::bail!("AI 返回了空响应，请重试。");
@@ -3064,7 +3095,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             temperature: 0.3,
             top_p: 1.0,
             stop: vec![],
-            stream: true,
+            stream: false,
             thinking_budget: None,
         };
 
@@ -3075,22 +3106,30 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()))
             .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
 
-        // Use streaming to collect response (works better with local models)
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
-        let handle = tokio::spawn(async move {
-            let mut text = String::new();
-            while let Some(token) = rx.recv().await {
-                text.push_str(&token);
+        let response = client.complete(request).await
+            .map_err(|e| anyhow::anyhow!("模型调用失败: {}. 请确认模型服务正常运行。", e))?;
+
+        let raw = response.text.trim().to_string();
+
+        // Record token usage for agent config generation
+        if response.prompt_tokens > 0 || response.completion_tokens > 0 {
+            let model_name = self.active_model_name().await.unwrap_or_else(|| "agent_generate".to_string());
+            let guard = self.memory_store.read().await;
+            if let Some(ref store) = *guard {
+                let _ = store
+                    .record_token_usage(
+                        "system",
+                        &format!("{} (agent_generate)", model_name),
+                        response.prompt_tokens,
+                        response.completion_tokens,
+                        0,
+                        0,
+                        0,
+                        0,
+                    )
+                    .await;
             }
-            text
-        });
-
-        if let Err(e) = client.complete_stream(request, tx).await {
-            handle.abort();
-            anyhow::bail!("模型调用失败: {}. 请确认模型服务正常运行。", e);
         }
-
-        let raw = handle.await.unwrap_or_default().trim().to_string();
 
         if raw.is_empty() {
             anyhow::bail!("AI 返回了空响应，请重试。提示：请确认已选择模型并模型服务正常运行。");
@@ -3214,7 +3253,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             temperature: 0.3,
             top_p: 1.0,
             stop: vec![],
-            stream: true,
+            stream: false,
             thinking_budget: None,
         };
 
@@ -3224,21 +3263,30 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             .or_else(|| self.cloud_client.try_read().ok().and_then(|g| g.clone()))
             .ok_or_else(|| anyhow::anyhow!("没有可用的模型。请先在设置中配置一个模型。"))?;
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
-        let handle = tokio::spawn(async move {
-            let mut text = String::new();
-            while let Some(token) = rx.recv().await {
-                text.push_str(&token);
+        let response = client.complete(request).await
+            .map_err(|e| anyhow::anyhow!("模型调用失败: {}. 请确认模型服务正常运行。", e))?;
+
+        let raw = response.text.trim().to_string();
+
+        // Record token usage for agent config optimization
+        if response.prompt_tokens > 0 || response.completion_tokens > 0 {
+            let model_name = self.active_model_name().await.unwrap_or_else(|| "agent_optimize".to_string());
+            let guard = self.memory_store.read().await;
+            if let Some(ref store) = *guard {
+                let _ = store
+                    .record_token_usage(
+                        "system",
+                        &format!("{} (agent_optimize)", model_name),
+                        response.prompt_tokens,
+                        response.completion_tokens,
+                        0,
+                        0,
+                        0,
+                        0,
+                    )
+                    .await;
             }
-            text
-        });
-
-        if let Err(e) = client.complete_stream(request, tx).await {
-            handle.abort();
-            anyhow::bail!("模型调用失败: {}. 请确认模型服务正常运行。", e);
         }
-
-        let raw = handle.await.unwrap_or_default().trim().to_string();
 
         if raw.is_empty() {
             anyhow::bail!("AI 返回了空响应，请重试。提示：请确认已选择模型并模型服务正常运行。");
@@ -6613,6 +6661,22 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                         )
                         .await?;
 
+                    // Record token usage to token_usage table for stats aggregation
+                    if turn.prompt_tokens > 0 || turn.completion_tokens > 0 {
+                        let _ = store
+                            .record_token_usage(
+                                session_id,
+                                &active_model_name,
+                                turn.prompt_tokens,
+                                turn.completion_tokens,
+                                turn.cache_read_tokens,
+                                turn.cache_write_tokens,
+                                0,
+                                turn.context_window,
+                            )
+                            .await;
+                    }
+
                     // ── Memory quality logging ──
                     let quality_duration_ms = quality_start.elapsed().as_millis() as i64;
                     let assistant_text_for_scan = extract_text(&assistant_parts);
@@ -7483,6 +7547,8 @@ struct CronPromptExecutor {
     model_configs: Arc<tokio::sync::RwLock<std::collections::HashMap<String, loom_types::ModelConfig>>>,
     /// API key store — used to resolve keys for per-job model overrides.
     key_store: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    /// Memory store — used to persist token usage for cron job LLM calls.
+    memory_store: Arc<tokio::sync::RwLock<Option<Box<dyn crate::MemoryStore>>>>,
 }
 
 impl CronPromptExecutor {
@@ -7604,6 +7670,7 @@ impl PromptExecutor for CronPromptExecutor {
         let workspace_path = self.workspace_path.clone();
         let permissions = self.permissions.clone();
         let sandbox_config = self.sandbox_config.clone();
+        let memory_store = self.memory_store.clone();
         // Per-turn timeout: give each LLM call a fair share of the total budget.
         let per_turn_timeout = std::cmp::max(30, timeout_secs / 3);
         let model_override = model.map(|s| s.to_string());
@@ -7684,6 +7751,26 @@ impl PromptExecutor for CronPromptExecutor {
                         ));
                     }
                 };
+
+                // Record token usage for each cron LLM turn
+                if resp.prompt_tokens > 0 || resp.completion_tokens > 0 {
+                    let guard = memory_store.read().await;
+                    if let Some(ref store) = *guard {
+                        let model_label = model_override.as_deref().unwrap_or("cron");
+                        let _ = store
+                            .record_token_usage(
+                                "cron",
+                                &format!("{} (cron)", model_label),
+                                resp.prompt_tokens,
+                                resp.completion_tokens,
+                                0,
+                                0,
+                                0,
+                                0,
+                            )
+                            .await;
+                    }
+                }
 
                 // If no tool calls, this is the final response.
                 if resp.tool_calls.is_empty() {

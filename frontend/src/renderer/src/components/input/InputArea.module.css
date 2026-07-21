@@ -12,9 +12,10 @@
   display: flex;
   flex-direction: column;
   background: var(--bg-card);
-  border: 1px solid var(--border-accent);
+  /* 纯静态：中性边框 + 深度阴影，不加任何 hover / focus 反馈（用户明确要求去除） */
+  border: 1px solid var(--border);
   border-radius: var(--r-2xl);
-  box-shadow: var(--shadow-composer);
+  box-shadow: var(--shadow-lg);
 }
 
 .textarea {
@@ -246,7 +247,7 @@
 
 .dragOver .composer {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25), var(--shadow-composer);
+  box-shadow: var(--shadow-lg), 0 0 0 2px rgba(var(--accent-rgb), 0.22);
 }
 
 /* ─── Skill Selector ─── */
@@ -449,6 +450,7 @@
 }
 
 .toolbarBtn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -473,4 +475,22 @@
   color: var(--accent);
   background: var(--accent-subtle);
   border-color: var(--accent);
+}
+
+/* 插话按钮上的待处理队列角标 */
+.steeringBadge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  color: #fff;
+  background: var(--accent);
+  border-radius: var(--r-full);
+  pointer-events: none;
 }

@@ -211,6 +211,13 @@ class StreamBufferManager {
     this._doHandleStreamDelta(sessionId, delta)
   }
 
+  /** 主 WS（loomSubscribe）是否已在处理该会话的流式事件。
+   *  IM 桥接会转发所有会话的引擎事件；同时订阅主 WS 的监听器必须跳过主 WS
+   *  已拥有的会话，否则插话队列、工具块、consumed→用户消息插入等会被处理两次。 */
+  isHandledByMainWs(sessionId: string): boolean {
+    return this.wsStreamSessions.has(sessionId)
+  }
+
  handleProcessOutput(sessionId: string, pid: string, data: string, stream: string): void {
    const store = useStore.getState()
    const sid = sessionId || store.currentSessionId || 'default'
@@ -364,6 +371,10 @@ class StreamBufferManager {
     const buf = this.ensureBuffer(sessionId)
     if (!buf.messageId) return
     if (tool.name === 'use_skill') {
+      // 去重：同一次调用可能经主 WS 与 IM 桥接两条路径各投递一次 tool.started。
+      // 若已记录该 id，跳过——否则会出现两个相同工具块，且 completed 只命中第一个，
+      // 第二个永远卡在"生成中"（Bug：工具块重复）。
+      if (buf.skillCalls.some((t) => t.id === tool.id)) return
       const skillName = (tool.args?.skill_name as string) || 'loading...'
       buf.skillCalls.push({
         id: tool.id,
@@ -376,6 +387,8 @@ class StreamBufferManager {
     } else {
       // All other tools (shell, file_write, file_read, content_search, etc.)
       // render in terminal-style ShellBlock for full visibility.
+      // 去重：同上，避免重复投递产生卡死的重复工具块。
+      if (buf.shellCalls.some((t) => t.id === tool.id)) return
       buf.shellCalls.push({
         id: tool.id,
         name: tool.name,
@@ -453,6 +466,34 @@ class StreamBufferManager {
       shell.result = prev ? prev + '\n' + line : line
       this.scheduleFlush(buf, sessionId)
     }
+  }
+
+  // ── IM bridge variants: skip when the main WS already owns this session ──
+  // Mirrors handleStreamDeltaIM's guard. Without it a regular chat that also
+  // gets forwarded over the IM bridge would process every tool event twice,
+  // duplicating tool blocks (one stuck "running").
+  handleToolStartedIM(
+    sessionId: string,
+    tool: { id: string; name: string; args: Record<string, unknown> },
+  ): void {
+    if (this.wsStreamSessions.has(sessionId)) return
+    this.handleToolStarted(sessionId, tool)
+  }
+
+  handleToolCompletedIM(
+    sessionId: string,
+    toolId: string,
+    result?: string,
+    toolName?: string,
+    details?: Record<string, unknown>,
+  ): void {
+    if (this.wsStreamSessions.has(sessionId)) return
+    this.handleToolCompleted(sessionId, toolId, result, toolName, details)
+  }
+
+  handleToolOutputIM(sessionId: string, toolId: string, line: string): void {
+    if (this.wsStreamSessions.has(sessionId)) return
+    this.handleToolOutput(sessionId, toolId, line)
   }
 
   handleStreamEnd(sessionId: string): void {

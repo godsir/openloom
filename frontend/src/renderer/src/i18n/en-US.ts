@@ -1741,6 +1741,8 @@ export const enUS: TranslationMap = {
   'keybindings.navSearchConversationsDesc': 'Focus the conversation search box.',
   'keybindings.navFocusInput': 'Focus Chat Input',
   'keybindings.navFocusInputDesc': 'Focus the message input field.',
+  'keybindings.navSwitchWorkspace': 'Switch Workspace',
+  'keybindings.navSwitchWorkspaceDesc': 'Choose a workspace directory for the current session.',
   'keybindings.uiToggleSidebar': 'Toggle Sidebar',
   'keybindings.uiToggleSidebarDesc': 'Show or hide the conversation sidebar.',
   'keybindings.uiOpenSettings': 'Open Settings',

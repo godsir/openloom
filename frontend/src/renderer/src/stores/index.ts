@@ -16,7 +16,6 @@ import { createLightboxSlice, LightboxSlice } from './lightbox'
 import { createTokenStatsSlice, TokenStatsSlice } from './tokenStats'
 import { createUpdateSlice, UpdateSlice } from './update'
 import { createCronSlice, CronSlice } from './cron'
-import { createPlanSlice, PlanSlice } from './plan'
 import { createTodoSlice, TodoSlice } from './todo'
 import { createSelectionContextSlice, SelectionContextSlice } from './selectionContext'
 import { createCompletionSlice, CompletionSlice } from './completion'
@@ -38,7 +37,6 @@ export type AppStore = ConnectionSlice &
   TokenStatsSlice &
   UpdateSlice &
   CronSlice &
-  PlanSlice &
   TodoSlice &
   SelectionContextSlice &
   CompletionSlice
@@ -61,7 +59,6 @@ export const useStore = create<AppStore>()((...a) => ({
   ...createTokenStatsSlice(...a),
   ...createUpdateSlice(...a),
   ...createCronSlice(...a),
-  ...createPlanSlice(...a),
   ...createTodoSlice(...a),
   ...createSelectionContextSlice(...a),
   ...createCompletionSlice(...a),

@@ -29,6 +29,8 @@ export interface UiSlice {
   showOnboarding: boolean
   islandExpanded: boolean
   appMode: 'chat' | 'write' | 'settings'
+  /** 工作块默认展开/折叠偏好（内存为会话内真值源，避免 config.json 读写竞态导致读取失效） */
+  workBlockExpandDefault: boolean
   setTheme: (theme: ThemeId) => void
   setFontSize: (size: FontSizeId) => void
   setSettingsOpen: (open: boolean) => void
@@ -41,6 +43,7 @@ export interface UiSlice {
   setShowOnboarding: (open: boolean) => void
   setIslandExpanded: (open: boolean) => void
   setAppMode: (mode: 'chat' | 'write' | 'settings') => void
+  setWorkBlockExpandDefault: (v: boolean) => void
 }
 
 function applyFontSize(size: FontSizeId) {
@@ -63,6 +66,7 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   showOnboarding: false,
   islandExpanded: false,
   appMode: 'chat',
+  workBlockExpandDefault: true,
 
   setTheme: (theme) => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -96,4 +100,8 @@ export const createUiSlice: StateCreator<UiSlice> = (set, get) => ({
   setShowOnboarding: (open) => set({ showOnboarding: open }),
   setIslandExpanded: (open) => set({ islandExpanded: open }),
   setAppMode: (mode) => set({ appMode: mode }),
+  setWorkBlockExpandDefault: (v) => {
+    window.loom.setPreference('workBlockExpandDefault', v)
+    set({ workBlockExpandDefault: v })
+  },
 })

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { ContentBlock } from '../../stores/chat'
+import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
 import { IconChevronRight, IconChevronDown } from '../../utils/icons'
 import ShellBlock from './ShellBlock'
@@ -94,24 +95,16 @@ export default function WorkBlockPanel({
   const { t } = useLocale()
   // null = no manual override, follow preference / streaming
   const [userOverride, setUserOverride] = useState<boolean | null>(null)
-  const [prefExpand, setPrefExpand] = useState(true)
+  // 偏好读自全局 store（内存真值源）：同步、响应式，不受 config.json 与后端
+  // 共写竞态影响。此前各面板异步 getPreference，读取失效时"折叠"设置不生效（修复）
+  const prefExpand = useStore(s => s.workBlockExpandDefault)
   // Track defaultExpanded to detect streaming→done transitions
   const prevDefault = useRef(defaultExpanded)
 
-  // Load preference on mount; listen for live changes from settings
+  // 全局偏好变化时重置手动覆盖，让新设置立即对所有工作块生效
   useEffect(() => {
-    window.loom.getPreference('workBlockExpandDefault', true).then(setPrefExpand)
-    const handler = (e: Event) => {
-      const d = (e as CustomEvent).detail
-      if (d?.key === 'work_block_expand') {
-        setPrefExpand(d.val)
-        // Reset all manual overrides when global pref changes
-        setUserOverride(null)
-      }
-    }
-    window.addEventListener('loom-pref-changed', handler)
-    return () => window.removeEventListener('loom-pref-changed', handler)
-  }, [])
+    setUserOverride(null)
+  }, [prefExpand])
 
   // When streaming state changes (starts or stops), reset manual override
   // so the automatic behaviour takes over again.

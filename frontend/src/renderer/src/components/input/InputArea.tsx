@@ -30,10 +30,13 @@ interface SkillInfo {
 
 export default function InputArea() {
   const { t } = useLocale()
+  const sessionId = useStore(s => s.currentSessionId)
   const toggleReviewPanel = useStore(s => s.toggleReviewPanel)
   const reviewPanelOpen = useStore(s => s.reviewPanelOpen)
-  const togglePlanPanel = useStore(s => s.togglePlanPanel)
-  const planPanelOpen = useStore(s => s.planPanelOpen)
+  // 该按钮唤出插话面板（计划面板已删除，由待办面板取代）
+  const toggleSteeringPanel = useStore(s => s.toggleSteeringPanel)
+  const steeringPanelOpen = useStore(s => s.steeringPanelOpen)
+  const steeringCount = useStore(s => s.steeringQueueCounts[sessionId ?? ''] ?? 0)
   const [text, setText] = useState('')
 
   // Commands that accept trailing text as argument
@@ -65,7 +68,6 @@ export default function InputArea() {
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const skillPopoverRef = useRef<HTMLDivElement>(null)
-  const sessionId = useStore(s => s.currentSessionId)
   // IM sessions (created by ImBridge, id prefixed with "im:") are chat-only on
   // the IM side — desktop can view/delete but must not send messages into them.
   const isImSession = !!sessionId && sessionId.startsWith('im:')
@@ -614,8 +616,15 @@ export default function InputArea() {
                 </svg>
               </button>
               <div className={styles.workspaceSpacer} />
-              <button className={styles.toolbarBtn} onClick={() => togglePlanPanel()} title={t('plan.title')} data-active={planPanelOpen || undefined}>
+              <button
+                className={styles.toolbarBtn}
+                onClick={() => toggleSteeringPanel()}
+                title={t('chat.steeringQueueTitle')}
+                data-active={(steeringPanelOpen || steeringCount > 0) || undefined}
+                aria-label={t('chat.steeringQueueTitle')}
+              >
                 <IconListOrdered size={14} />
+                {steeringCount > 0 && <span className={styles.steeringBadge}>{steeringCount}</span>}
               </button>
               <button className={styles.toolbarBtn} onClick={() => toggleReviewPanel()} title={t("review.open")} data-active={reviewPanelOpen || undefined}>
                 <IconScanSearch size={14} />

@@ -174,6 +174,14 @@ export const DEFAULT_COMMANDS: CommandDef[] = [
     allowInInput: true,
   },
 
+  {
+    id: 'nav:switch-workspace',
+    labelKey: 'keybindings.navSwitchWorkspace',
+    descKey: 'keybindings.navSwitchWorkspaceDesc',
+    category: 'navigation',
+    defaultKeys: 'ctrl+k',
+  },
+
   // UI
   {
     id: 'ui:toggle-sidebar',

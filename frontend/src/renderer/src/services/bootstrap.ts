@@ -96,8 +96,8 @@ function applyPreference(key: string, val: unknown) {
     window.loom.setPreference('skillExpandDefault', Boolean(val))
     window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'skill_expand', val: Boolean(val) } }))
   } else if (key === 'work_block_expand') {
-    window.loom.setPreference('workBlockExpandDefault', Boolean(val))
-    window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'work_block_expand', val: Boolean(val) } }))
+    // 经 store action 持久化并更新内存真值源，WorkBlockPanel 订阅 store 即时生效
+    useStore.getState().setWorkBlockExpandDefault(Boolean(val))
   } else if (key === 'task_notification') {
     window.loom.setPreference('taskCompleteNotification', Boolean(val))
     window.dispatchEvent(new CustomEvent('loom-pref-changed', { detail: { key: 'task_notification', val: Boolean(val) } }))
@@ -455,15 +455,9 @@ export async function bootstrapApp(): Promise<() => void> {
         break
       case 'plan.created':
       case 'plan.updated': {
-        // Plan content changed — reload todos so the panel reflects
-        // checkbox changes synced by the backend.
+        // Plan content changed — reload todos so the todo panel reflects
+        // checkbox changes synced by the backend. (计划面板已移除，仅保留待办同步)
         useStore.getState().loadTodos(sessionId).catch(() => {})
-        // 同时刷新计划列表，让 PlanPanel 及时看到新建/更新的计划（B1）
-        const planStore = useStore.getState()
-        const planWsRoot = sessionId
-          ? ((planStore as any).sessionWorkspaces?.[sessionId] || (planStore as any).defaultWorkspace || '')
-          : ((planStore as any).defaultWorkspace || '')
-        if (planWsRoot) planStore.loadPlans(planWsRoot).catch(() => {})
         break
       }
       case 'process.output': {
@@ -607,6 +601,10 @@ export async function bootstrapApp(): Promise<() => void> {
     const p = data.params
     const sessionId = (p?.session_id as string) || ''
     if (!sessionId) return
+    // IM 桥接会转发所有会话的引擎事件。常规会话的事件已由主 WS（loomSubscribe）处理，
+    // 此处若不排除，插话队列/工具块/consumed 插入用户消息等都会被处理两次（重复渲染）。
+    // 仅处理真正源自 IM 的会话。
+    if (streamBufferManager.isHandledByMainWs(sessionId)) return
 
     switch (data.method) {
       case 'chat.stream_delta':
@@ -620,10 +618,10 @@ export async function bootstrapApp(): Promise<() => void> {
         handleTokenUsage(sessionId, p)
         break
       case 'tool.started':
-        streamBufferManager.handleToolStarted(sessionId, p as any)
+        streamBufferManager.handleToolStartedIM(sessionId, p as any)
         break
       case 'tool.completed':
-        streamBufferManager.handleToolCompleted(
+        streamBufferManager.handleToolCompletedIM(
           sessionId,
           (p?.id as string) || '',
           p?.result as string | undefined,
@@ -631,7 +629,7 @@ export async function bootstrapApp(): Promise<() => void> {
         )
         break
       case 'tool.output':
-        streamBufferManager.handleToolOutput(
+        streamBufferManager.handleToolOutputIM(
           sessionId,
           (p?.id as string) || '',
           (p?.line as string) || '',

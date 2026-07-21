@@ -310,21 +310,11 @@ body{
   outline-offset: 2px;
 }
 
-/* ================================================================
-   REDUCED MOTION
-   尊重系统"减少动态效果"：无限循环动画（呼吸光晕/流光/脉冲等）
-   与过渡一律降级，前庭障碍用户不受困扰。
-   ================================================================ */
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
+/* 文本输入框自带光标，不需要焦点环；且用户明确要求输入框无任何聚焦描边，
+   故将 input/textarea 从全局焦点环中排除（按钮/链接等仍保留键盘可达性环） */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
 }
 
 /* ================================================================

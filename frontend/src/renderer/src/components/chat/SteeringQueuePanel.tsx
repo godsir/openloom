@@ -16,6 +16,8 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
   const { t } = useLocale()
   const items = useStore(s => s.steeringQueueItems[sessionId] ?? EMPTY_ITEMS)
   const streamingActive = useStore(s => s.streamingSessionIds.has(sessionId))
+  // 面板可见条件：被按钮手动唤出，或有待处理插话（自动唤出）
+  const panelOpen = useStore(s => s.steeringPanelOpen)
 
   const handleForceSend = useCallback(async (itemId: string, text: string) => {
     if (!sessionId) return
@@ -47,9 +49,10 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
 
   const handleClearAll = useCallback(() => {
     useStore.getState().clearSteeringItems(sessionId)
+    useStore.setState({ steeringPanelOpen: false })
   }, [sessionId])
 
-  if (items.length === 0) return null
+  if (!panelOpen && items.length === 0) return null
 
   return (
     <div className={styles.panel}>
@@ -60,7 +63,10 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
         </button>
       </div>
       <div className={styles.list}>
-        {items.map((item, i) => (
+        {items.length === 0 ? (
+          <div className={styles.empty}>{t('chat.steeringQueueEmpty')}</div>
+        ) : (
+          items.map((item, i) => (
           <div key={item.id} className={styles.item}>
             <span className={styles.index}>{i + 1}.</span>
             <span className={styles.text}>{item.text}</span>
@@ -78,7 +84,8 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
               </button>
             </div>
           </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   )

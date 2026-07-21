@@ -13,6 +13,8 @@ import { InlineInput } from './components/input/InlineInput'
 import { bootstrapApp } from './services/bootstrap'
 import { handleModelsChanged } from './services/app-event-actions'
 import { keybindingRegistry } from './services/keybindings'
+import { loomRpc } from './services/jsonrpc'
+import { rpc } from './services/rpc-toast'
 import { useStore } from './stores'
 import { t } from './i18n'
 import type { PermissionMode } from './stores/input'
@@ -94,6 +96,8 @@ export default function App() {
         useStore.getState().setFimEnabled(savedFimEnabled as boolean)
         const savedThinkingLevel = await window.loom.getPreference('thinkingLevel', 'medium')
         useStore.getState().setThinkingLevel(savedThinkingLevel as any)
+        const savedWorkBlockExpand = await window.loom.getPreference('workBlockExpandDefault', true)
+        useStore.setState({ workBlockExpandDefault: Boolean(savedWorkBlockExpand) })
         const savedPinned = await window.loom.getPreference<string[]>('pinnedIds', [])
         if (savedPinned.length) {
           useStore.setState({ pinnedIds: new Set(savedPinned) })
@@ -194,6 +198,15 @@ export default function App() {
         'textarea[data-chat-input]'
       )
       chatInput?.focus()
+    })
+    keybindingRegistry.register('nav:switch-workspace', async () => {
+      const sessionId = useStore.getState().currentSessionId
+      if (!sessionId) return
+      const path = await window.loom.selectFolder()
+      if (path) {
+        useStore.getState().setSessionWorkspace(sessionId, path)
+        await rpc('workspace.set_session', { session_id: sessionId, path }, t('sidebar.setWorkspace'))
+      }
     })
 
     // UI commands

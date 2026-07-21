@@ -29,6 +29,8 @@ export interface StreamingSlice {
   steeringQueueCounts: Record<string, number>
   /** Per-session steering queue items (ordered list) */
   steeringQueueItems: Record<string, SteeringQueueItem[]>
+  /** 插话面板是否被手动唤出（按钮切换）；新插话入队时也会自动置 true */
+  steeringPanelOpen: boolean
   addStreamingSession: (id: string) => void
   removeStreamingSession: (id: string) => void
   setStreamingActivity: (id: string, activity: StreamingActivity | null) => void
@@ -40,6 +42,8 @@ export interface StreamingSlice {
   addSteeringItem: (id: string, item: SteeringQueueItem) => void
   removeSteeringItems: (id: string, itemIds: string[]) => void
   clearSteeringItems: (id: string) => void
+  toggleSteeringPanel: () => void
+  openSteeringPanel: () => void
 }
 
 export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => ({
@@ -49,6 +53,7 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
   islandTransient: null,
   steeringQueueCounts: {},
   steeringQueueItems: {},
+  steeringPanelOpen: false,
 
   addStreamingSession: (id) => {
     const next = new Set(get().streamingSessionIds)
@@ -127,7 +132,13 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
 
   addSteeringItem: (id, item) => {
     const prev = get().steeringQueueItems[id] || []
-    set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: [...prev, item] } })
+    // 去重（安全网）：同一插话项可能经主 WS + IM 桥接两条路径各投递一次
+    if (prev.some((p) => p.id === item.id)) return
+    // 有新插话入队时自动唤出插话面板，确保用户看得到
+    set({
+      steeringQueueItems: { ...get().steeringQueueItems, [id]: [...prev, item] },
+      steeringPanelOpen: true,
+    })
     get().setSteeringQueueCount(id, prev.length + 1)
   },
 
@@ -143,4 +154,7 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
     set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: [] } })
     get().setSteeringQueueCount(id, 0)
   },
+
+  toggleSteeringPanel: () => set((s) => ({ steeringPanelOpen: !s.steeringPanelOpen })),
+  openSteeringPanel: () => set({ steeringPanelOpen: true }),
 })

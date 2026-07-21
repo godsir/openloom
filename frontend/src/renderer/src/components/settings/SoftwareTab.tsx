@@ -154,7 +154,8 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
   const [thinkingExpand, setThinkingExpand] = useState(false)
   const [toolExpand, setToolExpand] = useState(true)
   const [skillExpand, setSkillExpand] = useState(false)
-  const [workBlockExpand, setWorkBlockExpand] = useState(true)
+  // 工作块展开偏好读自全局 store（内存真值源），与 WorkBlockPanel 同源，避免读取失效
+  const workBlockExpand = useStore(s => s.workBlockExpandDefault)
   const [useSystemProxy, setUseSystemProxy] = useState(false)
   const [isWin32, setIsWin32] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -175,14 +176,13 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       window.loom.getPreference('thinkingExpandDefault', false),
       window.loom.getPreference('toolExpandDefault', true),
       window.loom.getPreference('skillExpandDefault', false),
-      window.loom.getPreference('workBlockExpandDefault', true),
       window.loom.getPreference('taskCompleteNotification', false),
       loomRpc<{ http_proxy?: string; proxy_enabled?: boolean }>('config.get_tool_prefs').then(p => {
         // 无自定义代理且已启用 → 使用系统代理
         setUseSystemProxy(!p.http_proxy && p.proxy_enabled === true)
       }).catch(() => {}),
       window.loom.getPlatform(),
-    ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, wbe, tcn, plat]) => {
+    ]).then(([as, ct, st, at, uf, cf, cc, dha, te, toe, se, tcn, plat]) => {
       setAutoStart(as)
       setCloseToTray(ct)
       setStartToTray(st)
@@ -199,7 +199,6 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
       setThinkingExpand(te as boolean)
       setToolExpand(toe as boolean)
       setSkillExpand(se as boolean)
-      setWorkBlockExpand(wbe as boolean)
       setTaskCompleteNotification(tcn as boolean)
       setIsWin32(plat === 'win32')
       setLoaded(true)
@@ -273,9 +272,9 @@ export default function SoftwareTab({ theme, setTheme }: { theme: string; setThe
     useStore.getState().addToast({ type: 'success', message: val ? t('software.skillExpanded') : t('software.skillCollapsed') })
   }
 
-  const handleWorkBlockExpand = async (val: boolean) => {
-    setWorkBlockExpand(val)
-    await window.loom.setPreference('workBlockExpandDefault', val)
+  const handleWorkBlockExpand = (val: boolean) => {
+    // 经 store action 持久化并更新内存真值源，WorkBlockPanel 订阅 store 即时生效
+    useStore.getState().setWorkBlockExpandDefault(val)
     useStore.getState().addToast({ type: 'success', message: val ? t('software.workBlockExpanded') : t('software.workBlockCollapsed') })
   }
 

@@ -1736,6 +1736,8 @@ export const zhTW: TranslationMap = {
   'keybindings.navSearchConversationsDesc': '聚焦對話搜尋框。',
   'keybindings.navFocusInput': '聚焦輸入框',
   'keybindings.navFocusInputDesc': '聚焦訊息輸入欄位。',
+  'keybindings.navSwitchWorkspace': '切換工作區',
+  'keybindings.navSwitchWorkspaceDesc': '為當前會話選擇工作區目錄。',
   'keybindings.uiToggleSidebar': '切換側邊欄',
   'keybindings.uiToggleSidebarDesc': '顯示或隱藏對話側邊欄。',
   'keybindings.uiOpenSettings': '開啟設定',

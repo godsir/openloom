@@ -6,7 +6,6 @@ import DynamicIslandCenter from './DynamicIslandCenter'
 import ChatWorkspace from '../chat/ChatWorkspace'
 import { WriteWorkspaceView } from '../write/WriteWorkspaceView'
 import SettingsPage from '../settings/SettingsPage'
-import { PlanPanel } from '../plan/PlanPanel'
 import { IconPanelLeftClose, IconPanelLeft, IconAlertCircle, IconWifiOff, IconRefresh, IconRotateCcw, IconSettings, IconEdit, IconMessageSquare, IconArrowLeft } from '../../utils/icons'
 import { connectWebSocket } from '../../services/websocket'
 import { useLocale } from '../../i18n'
@@ -210,11 +209,6 @@ export default function AppShell({ children }: { children?: ReactNode }) {
               <span className={styles.connectionText}>
                 {wsState === 'connected' ? t('app.connected') : t('app.reconnecting')}
               </span>
-            </div>
-          )}
-          {appMode === 'chat' && (
-            <div className={styles.rightPanels}>
-              <PlanPanel />
             </div>
           )}
         </main>
