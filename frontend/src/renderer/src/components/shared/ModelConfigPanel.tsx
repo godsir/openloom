@@ -909,16 +909,6 @@ export default function ModelConfigPanel() {
                                   />
                                 </div>
                               </div>
-                              <div className={styles.pvCapRow}>
-                                <label className={styles.pvCapCheck + ' ' + (editForm.compact_mode ? styles.pvCapCheckActive : '')}>
-                                  <input
-                                    type="checkbox"
-                                    checked={editForm.compact_mode}
-                                    onChange={e => setEditForm(f => ({ ...f, compact_mode: e.target.checked }))}
-                                  />
-                                  <span>{t('modelPanel.compactMode')}</span>
-                                </label>
-                              </div>
                               <div className={styles.pvField}>
                                 <label className={styles.pvEditLabel}>{t('modelPanel.apiKeyEnv')}</label>
                                 <input
@@ -947,6 +937,10 @@ export default function ModelConfigPanel() {
                                   <input type="checkbox" checked={editForm.function_calling} onChange={e => setEditForm(f => ({ ...f, function_calling: e.target.checked }))} />
                                   <IconWrench size={12} />
                                   <span>{t('modelPanel.toolCalling')}</span>
+                                </label>
+                                <label className={styles.pvCapCheck + ' ' + (editForm.compact_mode ? styles.pvCapCheckActive : '')}>
+                                  <input type="checkbox" checked={editForm.compact_mode} onChange={e => setEditForm(f => ({ ...f, compact_mode: e.target.checked }))} />
+                                  <span>{t('modelPanel.compactMode')}</span>
                                 </label>
                               </div>
                             </div>
