@@ -4910,7 +4910,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             // Use the same effective context window as the trigger check so
             // context_window=0 doesn't collapse recent_count to 0 (which would
             // send the entire history to the summariser, exceeding its context).
-            let effective_cw = context_window.max(100_000);
+            // 本地小窗口 summarizer 防爆：cap 到 8192，下限 2048。
+            // context_window 未知(0)时取 2048，不再用 100K 高估导致总结段超长。
+            let summary_budget = context_window.min(8192).max(2048);
+            let effective_cw = summary_budget;
             let recent_count =
                 ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
                     .min(total_msgs);
@@ -4920,6 +4923,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 summary_at_count,
                 recent_boundary,
                 existing_summary.as_deref(),
+                summary_budget,
             );
             let mut request = loom_memory::SummaryEngine::build_request(&prompt);
             request.max_tokens = self.compaction_config.summary_max_tokens;
@@ -6197,7 +6201,10 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             // Use the same effective context window as the trigger check so
             // context_window=0 doesn't collapse recent_count to 0 (which would
             // send the entire history to the summariser, exceeding its context).
-            let effective_cw = context_window.max(100_000);
+            // 本地小窗口 summarizer 防爆：cap 到 8192，下限 2048。
+            // context_window 未知(0)时取 2048，不再用 100K 高估导致总结段超长。
+            let summary_budget = context_window.min(8192).max(2048);
+            let effective_cw = summary_budget;
             let recent_count =
                 ((effective_cw as f32 * self.compaction_config.keep_recent_tokens_pct) as usize)
                     .min(total_msgs);
@@ -6207,6 +6214,7 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
                 summary_at_count,
                 recent_boundary,
                 existing_summary.as_deref(),
+                summary_budget,
             );
             let mut request = loom_memory::SummaryEngine::build_request(&prompt);
             request.max_tokens = self.compaction_config.summary_max_tokens;
