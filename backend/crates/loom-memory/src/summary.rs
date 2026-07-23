@@ -92,15 +92,48 @@ impl SummaryEngine {
 
     /// Build the prompt from a [from, to) slice of history, using full content
     /// (text + tool calls + tool results), not just text_content().
+    ///
+    /// `budget` 是 prompt 的 token 预算上限（char/4 估算）。0 = 不限制。
+    /// 超 budget 时从 to 往前累加，截断较旧历史，只保留最近 budget 内的较新段——
+    /// 防止本地小窗口 summarizer 被超长历史段撑爆。
     pub fn build_prompt_segmented(
         history: &[Message],
         from: usize,
         to: usize,
         existing_summary: Option<&str>,
+        budget: usize,
     ) -> String {
         let to = to.min(history.len());
         let from = from.min(to);
-        let history_text = history[from..to]
+        // 从 to 往前累加，超 budget 停（保留较新段）
+        let mut acc_chars: usize = 0;
+        let mut effective_from = from;
+        for i in (from..to).rev() {
+            let msg_chars: usize = history[i]
+                .content
+                .iter()
+                .map(|c| match c {
+                    loom_types::ContentPart::Text { text } => text.len(),
+                    loom_types::ContentPart::Thinking { text } => text.len() + 10,
+                    loom_types::ContentPart::ToolCall { name, arguments, .. } => {
+                        name.len() + arguments.to_string().len() + 20
+                    }
+                    loom_types::ContentPart::ToolResult { name, result, .. } => {
+                        name.len() + result.len() + 20
+                    }
+                    loom_types::ContentPart::Image { .. }
+                    | loom_types::ContentPart::ImageRef { .. } => 8,
+                })
+                .sum();
+            // budget 用 char/4 估算 token；累计 char 超 budget*4 视为超预算
+            if budget > 0 && acc_chars + msg_chars > budget * 4 {
+                effective_from = i + 1;
+                break;
+            }
+            acc_chars += msg_chars;
+            effective_from = i;
+        }
+        let history_text = history[effective_from..to]
             .iter()
             .map(|m| {
                 let body = m
@@ -247,7 +280,7 @@ mod tests {
         let history: Vec<Message> = (0..10)
             .map(|i| Message::user(format!("msg {}", i)))
             .collect();
-        let prompt = SummaryEngine::build_prompt_segmented(&history, 2, 8, None);
+        let prompt = SummaryEngine::build_prompt_segmented(&history, 2, 8, None, 0);
         assert!(prompt.contains("msg 2"));
         assert!(prompt.contains("msg 7"));
         assert!(!prompt.contains("msg 1"));
@@ -260,10 +293,36 @@ mod tests {
             Message::user("q"),
             Message::tool("c1", "shell", "BIG_RESULT_12345"),
         ];
-        let prompt = SummaryEngine::build_prompt_segmented(&history, 0, 2, None);
+        let prompt = SummaryEngine::build_prompt_segmented(&history, 0, 2, None, 0);
         assert!(
             prompt.contains("BIG_RESULT_12345"),
             "分段 prompt 必须包含工具结果, 不能只用 text_content"
         );
+    }
+
+    #[test]
+    fn test_build_prompt_segmented_budget_truncates_old() {
+        // 10 条历史，budget 只够装 2 条 → 截断较旧，只保留最近 2 条
+        let history: Vec<Message> = (0..10)
+            .map(|i| Message::user(format!("msg {}", i)))
+            .collect();
+        // budget 按 char/4 估算；每条 "msg N" = 5 char ≈ 1 token。
+        // 给 budget=3（≈ 12 char），应截掉 msg 0..7，只保留 msg 8, 9
+        let prompt = SummaryEngine::build_prompt_segmented(&history, 0, 10, None, 3);
+        assert!(prompt.contains("msg 9"));
+        assert!(prompt.contains("msg 8"));
+        assert!(!prompt.contains("msg 0"));
+        assert!(!prompt.contains("msg 5"));
+    }
+
+    #[test]
+    fn test_build_prompt_segmented_budget_zero_no_truncate() {
+        let history: Vec<Message> = (0..10)
+            .map(|i| Message::user(format!("msg {}", i)))
+            .collect();
+        // budget=0 表示不限制 → 全量（向后兼容旧行为）
+        let prompt = SummaryEngine::build_prompt_segmented(&history, 0, 10, None, 0);
+        assert!(prompt.contains("msg 0"));
+        assert!(prompt.contains("msg 9"));
     }
 }
