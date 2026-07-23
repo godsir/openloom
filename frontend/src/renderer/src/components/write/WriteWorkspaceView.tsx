@@ -10,6 +10,7 @@ import { WriteSidebar } from './WriteSidebar'
 import WriteToolbar from './WriteToolbar'
 import { WriteDocumentPane } from './WriteDocumentPane'
 import { WriteAssistantPanel } from './WriteAssistantPanel'
+import { WriteAssistantWindow } from './WriteAssistantWindow'
 import { WriteFileDialogs } from './WriteFileDialogs'
 import styles from './WriteWorkspaceView.module.css'
 import { composeWritePrompt, limitWriteContext } from '../../write/quoted-selection'
@@ -159,6 +160,10 @@ export const WriteWorkspaceView: React.FC = () => {
     removeFileThread(threadKey)
   }, [workspaceRoot, activeFilePath, fileThreads, evictSession, removeFileThread])
 
+  const handleAssistantClose = useCallback(() => {
+    useWriteStore.getState().setAssistantOpen(false)
+  }, [])
+
   const handleStaleSession = useCallback((dead: string) => {
     for (const [fp, sid] of Object.entries(fileThreads)) { if (sid === dead) removeFileThread(fp) }
   }, [fileThreads, removeFileThread])
@@ -259,13 +264,18 @@ export const WriteWorkspaceView: React.FC = () => {
           )}
           <WriteDocumentPane onSelectWorkspace={handleSelectWorkspace} onSendToAssistant={handleAssistantSend} />
         </div>
-        {workspaceRoot && assistantOpen && (
+      </div>
+      {workspaceRoot && assistantOpen && (
+        <WriteAssistantWindow
+          title={t('write.aiWritingAssistant')}
+          onClose={handleAssistantClose}
+        >
           <WriteAssistantPanel
             quickSuggestions={suggestions} onSend={handleAssistantSend}
             onNewChat={handleNewChat} onStaleSession={handleStaleSession}
           />
-        )}
-      </div>
+        </WriteAssistantWindow>
+      )}
       <WriteFileDialogs />
       {toastMessage && <div className={styles.toast}>{toastMessage.text}</div>}
     </div>

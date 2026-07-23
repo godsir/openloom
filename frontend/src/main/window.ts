@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, app, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { getStoreKey } from './store'
+import { isSafeExternalWindowUrl, isWriteAssistantWindowRequest } from './write-assistant-window'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -56,9 +57,44 @@ export function createMainWindow(port: number): BrowserWindow {
   })
 
   // Prevent any link click from hijacking the app window
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (isWriteAssistantWindowRequest(url, frameName)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 380,
+          height: 640,
+          minWidth: 320,
+          minHeight: 400,
+          resizable: true,
+          minimizable: true,
+          maximizable: true,
+          fullscreenable: false,
+          autoHideMenuBar: true,
+          backgroundColor: '#171717',
+          title: 'AI Writing Assistant',
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        },
+      }
+    }
     shell.openExternal(url)
     return { action: 'deny' }
+  })
+  mainWindow.webContents.on('did-create-window', (childWindow, details) => {
+    if (!isWriteAssistantWindowRequest(details.url, details.frameName)) return
+
+    childWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (isSafeExternalWindowUrl(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    childWindow.webContents.on('will-navigate', (event, url) => {
+      event.preventDefault()
+      if (isSafeExternalWindowUrl(url)) void shell.openExternal(url)
+    })
   })
   mainWindow.webContents.on('will-navigate', (event, url) => {
     // Allow only the initial load; block all other navigations

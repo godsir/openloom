@@ -1,19 +1,11 @@
 /* ── AI Assistant Panel ── */
 .panel {
-  width: 350px;
-  border-left: 1px solid var(--border);
+  width: 100%;
+  height: 100%;
   background: var(--bg-surface);
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* 打开时从右侧滑入，避免"啪"地弹出（A20） */
-  animation: panelSlideIn var(--dur-normal) var(--ease-out);
-}
-
-@keyframes panelSlideIn {
-  from { opacity: 0; transform: translateX(16px); }
-  to { opacity: 1; transform: translateX(0); }
 }
 
 .header {
