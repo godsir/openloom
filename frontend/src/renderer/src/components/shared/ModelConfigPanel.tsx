@@ -938,7 +938,7 @@ export default function ModelConfigPanel() {
                                   <IconWrench size={12} />
                                   <span>{t('modelPanel.toolCalling')}</span>
                                 </label>
-                                <label className={styles.pvCapCheck + ' ' + (editForm.compact_mode ? styles.pvCapCheckActive : '')}>
+                                <label className={styles.pvCapCheck + ' ' + (editForm.compact_mode ? styles.pvCapCheckActive : '')} title={t('modelPanel.compactModeHint')}>
                                   <input type="checkbox" checked={editForm.compact_mode} onChange={e => setEditForm(f => ({ ...f, compact_mode: e.target.checked }))} />
                                   <span>{t('modelPanel.compactMode')}</span>
                                 </label>
