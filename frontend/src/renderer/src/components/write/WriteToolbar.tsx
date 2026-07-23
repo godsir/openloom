@@ -22,6 +22,7 @@ export default function WriteToolbar({ onNewFile, onSave, onToggleAssistant }: W
   const saveStatus = useWriteStore((s) => s.saveStatus)
   const activeFilePath = useWriteStore((s) => s.activeFilePath)
   const assistantOpen = useWriteStore((s) => s.assistantOpen)
+  const fileTruncated = useWriteStore((s) => s.fileTruncated)
 
   const statusLabel = SAVE_STATUS_LABELS[saveStatus] || saveStatus
   const statusClass =
@@ -51,8 +52,8 @@ export default function WriteToolbar({ onNewFile, onSave, onToggleAssistant }: W
         <button
           className={styles.btnIcon}
           onClick={onSave}
-          disabled={!activeFilePath || saveStatus === 'saving'}
-          title="保存"
+          disabled={!activeFilePath || saveStatus === 'saving' || fileTruncated}
+          title={fileTruncated ? '文件仅加载了部分内容，当前禁止保存' : '保存'}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />

@@ -1,9 +1,8 @@
 import React, { useState, useCallback } from 'react'
-import { useWriteStore } from '../../stores/write'
+import { getWriteThreadKey, useWriteStore } from '../../stores/write'
 import { useStore } from '../../stores'
 import { loomRpc } from '../../services/jsonrpc'
 import { streamBufferManager } from '../../services/stream-buffer'
-import { composeWritePrompt } from '../../write/quoted-selection'
 import { resolveAgentPreset } from '../../write/agent-presets'
 import { useLocale } from '../../i18n'
 import { IconSparkles, IconSend, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck, IconStopCircle } from '../../utils/icons'
@@ -35,12 +34,15 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
   const { t } = useLocale()
   const activeFilePath = useWriteStore(s => s.activeFilePath)
   const fileThreads = useWriteStore(s => s.fileThreads)
+  const workspaceRoot = useWriteStore(s => s.workspaceRoot)
   const agentPresetId = useWriteStore(s => s.agentPresetId)
   const setAgentPresetId = useWriteStore(s => s.setAgentPresetId)
 
   const [assistantText, setAssistantText] = useState('')
 
-  const sessionId = activeFilePath ? (fileThreads[activeFilePath] || null) : null
+  const sessionId = activeFilePath && workspaceRoot
+    ? (fileThreads[getWriteThreadKey(workspaceRoot, activeFilePath)] || null)
+    : null
   const activeFileName = activeFilePath ? activeFilePath.split('/').pop() || null : null
 
   // 当前文件会话是否正在流式生成：是则发送键切换为"停止"（A22）
@@ -61,24 +63,13 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
   const handleSend = useCallback(async (text?: string) => {
     const msg = (text || assistantText).trim()
     if (!msg) return
-    const persona = resolveAgentPreset(useWriteStore.getState().agentPresetId)
-    const quotedSelections = useWriteStore.getState().quotedSelections
-    const fullPrompt = composeWritePrompt(
-      msg,
-      activeFileName || '',
-      '', // fileContent will be added by the parent
-      quotedSelections.length > 0 ? quotedSelections : undefined,
-      undefined, // retrieval context (Phase 3 RAG)
-      persona?.persona,
-    )
     try {
-      await onSend(fullPrompt)
+      await onSend(msg)
       if (!text) setAssistantText('') // only clear for manual input, not suggestions
     } catch {
       // onSend threw — keep text for manual input
       if (!text) setAssistantText(msg)
     }
-    useWriteStore.getState().clearQuotedSelections()
   }, [assistantText, onSend, activeFileName])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {

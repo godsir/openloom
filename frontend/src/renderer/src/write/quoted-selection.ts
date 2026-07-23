@@ -8,7 +8,7 @@ export function createQuotedSelection(
   filePath: string,
 ): QuotedSelection {
   return {
-    id: `qs`,
+    id: globalThis.crypto?.randomUUID?.() ?? `qs-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     text: selection.text,
     filePath,
     lineFrom: selection.lineFrom,
@@ -70,6 +70,15 @@ export function composeWritePrompt(
   parts.push(userInput);
 
   return parts.join('\n');
+}
+
+const WRITE_CONTEXT_MAX_CHARS = 20_000;
+
+export function limitWriteContext(content: string): string {
+  if (content.length <= WRITE_CONTEXT_MAX_CHARS) return content;
+  const head = content.slice(0, 12_000);
+  const tail = content.slice(-8_000);
+  return `${head}\n\n[正文中间部分因上下文限制已省略]\n\n${tail}`;
 }
 
 /**

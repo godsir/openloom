@@ -15,11 +15,15 @@ import {
   IconMessageSquare,
 } from '../../utils/icons';
 import styles from './WriteInlineAgent.module.css';
+import type { RichEditorActiveState } from '../../write/tiptap/WriteRichEditor';
 
 interface WriteInlineAgentProps {
   editorValue: string;
   onApplyEdit: (newContent: string) => void;
   onSendToAssistant: (text: string) => void;
+  onRichBlockType?: (type: WriteBlockType) => void;
+  onRichInlineFormat?: (kind: InlineFormatKind) => void;
+  getRichActiveState?: () => RichEditorActiveState | undefined;
 }
 
 interface BlockTypeDef {
@@ -58,15 +62,24 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   editorValue,
   onApplyEdit,
   onSendToAssistant,
+  onRichBlockType,
+  onRichInlineFormat,
+  getRichActiveState,
 }) => {
   const selection = useWriteStore((s) => s.selection);
   const setSelection = useWriteStore((s) => s.setSelection);
   const addQuotedSelection = useWriteStore((s) => s.addQuotedSelection);
+  const activeFilePath = useWriteStore((s) => s.activeFilePath);
 
   const hasSelection = selection !== null;
+  const richState = selection?.source === 'rich' ? getRichActiveState?.() : undefined;
 
   const handleBlockType = (type: WriteBlockType) => {
     if (!selection) return;
+    if (selection.source === 'rich') {
+      onRichBlockType?.(type);
+      return;
+    }
     const lines = selection.text.split('\n');
     const newLines = applyBlockType(lines, type);
     const newText = newLines.join('\n');
@@ -78,6 +91,10 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
 
   const handleInlineFormat = (kind: InlineFormatKind) => {
     if (!selection) return;
+    if (selection.source === 'rich') {
+      onRichInlineFormat?.(kind);
+      return;
+    }
     const formatted = toggleInlineFormat(selection.text, kind);
     if (formatted === null) return;
     const before = editorValue.slice(0, selection.from);
@@ -100,7 +117,7 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
 
   const handleQuoteToAssistant = () => {
     if (!selection) return;
-    const qs = createQuotedSelection(selection, '');
+    const qs = createQuotedSelection(selection, activeFilePath || '');
     addQuotedSelection(qs);
     setSelection(null);
   };
@@ -111,7 +128,9 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
       <div className={styles.row}>
         <div className={styles.section}>
           {BLOCK_TYPES.map((bt) => {
-            const currentType = selection ? detectBlockType(selection.text.split('\n')[0]) : null;
+            const currentType = selection?.source === 'rich'
+              ? richState?.block
+              : selection ? detectBlockType(selection.text.split('\n')[0]) : null;
             const active = currentType === bt.type;
             const BtnIcon = bt.Icon;
             return (
@@ -132,7 +151,9 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
 
         <div className={styles.section}>
           {INLINE_FORMATS.map((f) => {
-            const active = hasSelection && hasInlineFormat(selection!.text, f.kind);
+            const active = selection?.source === 'rich'
+              ? !!richState?.[f.kind]
+              : hasSelection && hasInlineFormat(selection!.text, f.kind);
             const FmtIcon = f.Icon;
             return (
               <button

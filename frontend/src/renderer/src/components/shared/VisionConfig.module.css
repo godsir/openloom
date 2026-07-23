@@ -108,3 +108,24 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+.visionTestBtn {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.visionTestBtn:hover:not(:disabled) {
+  border-color: var(--border-accent);
+  color: var(--text);
+}
+
+.visionTestBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

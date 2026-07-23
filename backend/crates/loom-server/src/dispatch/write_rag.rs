@@ -118,8 +118,8 @@ async fn handle_index_workspace(state: &AppState, p: &Value) -> Result<Value, Js
         Ok(count) => {
             // Store index in AppState
             let chunks_len = index.chunks.len();
-            if let Ok(mut guard) = state.write_index.write() {
-                *guard = Some(index);
+            if let Ok(mut guard) = state.write_indexes.write() {
+                guard.insert(ws_path.clone(), index);
             }
             Ok(json!({
                 "ok": true,
@@ -132,16 +132,26 @@ async fn handle_index_workspace(state: &AppState, p: &Value) -> Result<Value, Js
 }
 
 async fn handle_search_workspace(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
+    let workspace_root = p
+        .get("workspace_root")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if workspace_root.is_empty() {
+        return Err(err(ErrorCode::InvalidRequest, "workspace_root required"));
+    }
+    let ws_path = PathBuf::from(workspace_root)
+        .canonicalize()
+        .map_err(|_| err(ErrorCode::PermissionDenied, "invalid workspace_root"))?;
     let query = p.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let top_k = p.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+    let top_k = (p.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize).clamp(1, 20);
 
     if query.is_empty() {
         return Ok(json!({ "ok": true, "results": [] }));
     }
 
     // Get index from state
-    let guard = state.write_index.read().unwrap();
-    let index = match guard.as_ref() {
+    let guard = state.write_indexes.read().unwrap();
+    let index = match guard.get(&ws_path) {
         Some(idx) => idx,
         None => {
             return Ok(json!({
@@ -151,16 +161,6 @@ async fn handle_search_workspace(state: &AppState, p: &Value) -> Result<Value, J
             }));
         }
     };
-
-    // Check staleness
-    if index.is_stale() {
-        drop(guard);
-        return Ok(json!({
-            "ok": false,
-            "error": "index is stale, please re-index",
-            "results": []
-        }));
-    }
 
     // Tokenize query
     let query_terms: Vec<String> = tokenize(query);
@@ -252,8 +252,8 @@ async fn handle_reindex_file(state: &AppState, p: &Value) -> Result<Value, JsonR
     }
 
     // Remove old chunks for this file
-    if let Ok(mut guard) = state.write_index.write() {
-        if let Some(ref mut index) = *guard {
+    if let Ok(mut guard) = state.write_indexes.write() {
+        if let Some(index) = guard.get_mut(&ws_path) {
             // Remove from inverted index (simplified: rebuild without old chunks)
             let old_count = index.chunks.len();
             index.chunks.retain(|c| c.file_path != file_path);
@@ -282,6 +282,8 @@ async fn handle_reindex_file(state: &AppState, p: &Value) -> Result<Value, JsonR
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
+        } else {
+            return Ok(json!({ "ok": false, "error": "no index built for workspace" }));
         }
     }
 

@@ -4,6 +4,7 @@ import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
 import Select from '../shared/Select'
 import styles from './WriteWorkspaceView.module.css'
+import { guardWriteNavigation } from '../../write/navigation-guard'
 
 const FILE_EXT_OPTIONS = [
   { value: '.md', label: '.md' },
@@ -18,6 +19,7 @@ export const WriteFileDialogs: React.FC = () => {
   const setModalState = useWriteStore(s => s.setModalState)
   const showToast = useWriteStore(s => s.showToast)
   const setActiveFile = useWriteStore(s => s.setActiveFile)
+  const openCreatedTextFile = useWriteStore(s => s.openCreatedTextFile)
   const clearActiveFile = useWriteStore(s => s.clearActiveFile)
   const triggerRefresh = useWriteStore(s => s.triggerRefresh)
 
@@ -67,8 +69,9 @@ export const WriteFileDialogs: React.FC = () => {
     const title = raw.replace(/\.(md|txt|markdown)$/i, '')
     const content = '# ' + title + '\n\n'
     try {
+      if (!(await guardWriteNavigation())) return
       await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: name, content })
-      setActiveFile(name, 'text')
+      openCreatedTextFile(name, content)
       showToast('success', t('write.fileCreated'))
       triggerRefresh()
       close()

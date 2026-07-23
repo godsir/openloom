@@ -57,6 +57,25 @@ export function registerWriteIpc(): void {
     return { canceled: result.canceled, path: result.filePaths[0] || null }
   })
 
+  ipcMain.handle('write:export-markdown', async (_event, markdown: string, title: string) => {
+    try {
+      const safeTitle = path
+        .basename(title || 'document')
+        .replace(/\.(md|markdown)$/i, '')
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      const result = await dialog.showSaveDialog({
+        title: '导出 Markdown',
+        defaultPath: `${safeTitle || 'document'}.md`,
+        filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+      })
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+      fs.writeFileSync(result.filePath, markdown, 'utf-8')
+      return { ok: true, path: result.filePath }
+    } catch (error: any) {
+      return { ok: false, error: error?.message || String(error) }
+    }
+  })
+
   // Export write document as HTML
   ipcMain.handle('write:export-html', async (_event, { filePath, content }: { filePath: string; content: string }) => {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${path.basename(filePath)}</title>

@@ -36,7 +36,7 @@ pub struct AppState {
     /// to <data_dir>/credentials.json on every save.
     pub key_store: Arc<sync::RwLock<HashMap<String, String>>>,
     /// Write-mode workspace RAG index (BM25 keyword retrieval).
-    pub write_index: Arc<RwLock<Option<dispatch::write_rag::WorkspaceIndex>>>,
+    pub write_indexes: Arc<RwLock<HashMap<PathBuf, dispatch::write_rag::WorkspaceIndex>>>,
     /// Global event log for WS replay. Shared across connections.
     pub event_log: Arc<tokio::sync::Mutex<ConnectionEventLog>>,
 }
@@ -56,7 +56,7 @@ impl AppState {
             data_dir,
             shutdown_token,
             key_store,
-            write_index: Arc::new(RwLock::new(None)),
+            write_indexes: Arc::new(RwLock::new(HashMap::new())),
             event_log: Arc::new(tokio::sync::Mutex::new(ConnectionEventLog::new(2000))),
         }
     }

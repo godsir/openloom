@@ -4,6 +4,7 @@ import { loomRpc } from '../../services/jsonrpc'
 import { useLocale } from '../../i18n'
 import { IconChevronRight, IconChevronDown, IconFileText, IconFile, IconImage, IconFolderClosed, IconFolderOpen, IconLoader } from '../../utils/icons'
 import styles from './WriteFileTree.module.css'
+import { guardWriteNavigation } from '../../write/navigation-guard'
 
 // ---- constants ----
 
@@ -36,6 +37,7 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
   const [ctxMenu, setCtxMenu] = React.useState<{ x: number; y: number; entry: WorkspaceEntry } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
   const [ctxMenuPos, setCtxMenuPos] = React.useState({ left: 0, top: 0 })
+  const readSeqRef = useRef(0)
 
   // Clamp context menu position to viewport
   useLayoutEffect(() => {
@@ -114,6 +116,7 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
 
   // load root entries whenever workspaceRoot changes
   useEffect(() => {
+    readSeqRef.current += 1
     if (workspaceRoot) {
       loadDir('.')
     }
@@ -137,6 +140,9 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
       }
 
       // ---- file ----
+      if (entry.path !== activeFilePath && !(await guardWriteNavigation())) return
+      const readSeq = ++readSeqRef.current
+      const readWorkspaceRoot = workspaceRoot
       const ext = extOf(entry)
       const kind = getFileKind(ext)
 
@@ -153,18 +159,18 @@ export const WriteFileTree: React.FC<WriteFileTreeProps> = ({ onNewFile }) => {
             path: entry.path,
             workspace_root: workspaceRoot!,
           })
-          if (result.ok) {
+          if (result.ok && readSeq === readSeqRef.current && useWriteStore.getState().workspaceRoot === readWorkspaceRoot) {
             setFileContent(result.content)
             if (result.size !== undefined) setFileSize(result.size)
             if (result.truncated !== undefined) setFileTruncated(result.truncated)
             setActiveFile(entry.path, kind)
-          } else {
+          } else if (readSeq === readSeqRef.current) {
             setFileError('Failed to read file')
           }
         } catch (e: any) {
-          setFileError(String(e?.message ?? e).slice(0, 120))
+          if (readSeq === readSeqRef.current) setFileError(String(e?.message ?? e).slice(0, 120))
         } finally {
-          setFileLoading(false)
+          if (readSeq === readSeqRef.current) setFileLoading(false)
         }
       } else {
         setActiveFile(entry.path, kind)

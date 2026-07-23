@@ -15,6 +15,7 @@ export interface WorkspaceEntry {
 }
 
 export interface WriteEditorSelectionState {
+  source: 'markdown' | 'rich';
   text: string;
   from: number;
   to: number;
@@ -57,6 +58,10 @@ export type WriteSaveStatus = 'saved' | 'dirty' | 'saving' | 'error';
 export type WriteModalState = 'none' | 'newFile' | 'newFolder' | 'rename' | 'delete' | 'export';
 export type WriteFileKind = 'text' | 'image' | 'pdf';
 
+export function getWriteThreadKey(workspaceRoot: string, filePath: string): string {
+  return `${workspaceRoot}\u0000${filePath}`;
+}
+
 // ============================================================
 // Slice 1: writeSettingsSlice
 // ============================================================
@@ -77,6 +82,7 @@ interface WriteSettingsSlice {
   shortMaxTokens: number;
   longMaxTokens: number;
   retrievalEnabled: boolean;
+  writingAgentName: string | null;
   imageStoragePath: string;
   autoSaveIntervalMs: number;
 
@@ -88,6 +94,7 @@ interface WriteSettingsSlice {
   toggleFileSidebar: () => void;
   setInlineCompletionEnabled: (enabled: boolean) => void;
   setRetrievalEnabled: (enabled: boolean) => void;
+  setWritingAgentName: (name: string | null) => void;
 }
 
 const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
@@ -105,13 +112,31 @@ const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
   minAcceptScore: 0.6,
   shortMaxTokens: 64,
   longMaxTokens: 256,
-  retrievalEnabled: true,
+  retrievalEnabled: false,
+  writingAgentName: null,
   imageStoragePath: '.assets/',
   autoSaveIntervalMs: 900,
 
   setWorkspaceRoot: (root) => {
     console.log('[writeStore] setWorkspaceRoot called:', root);
-    set({ workspaceRoot: root, entriesByDir: {}, expandedDirs: {}, activeFilePath: null, fileContent: '' });
+    set({
+      workspaceRoot: root,
+      entriesByDir: {},
+      expandedDirs: {},
+      activeFilePath: null,
+      activeFileKind: 'text',
+      fileContent: '',
+      saveStatus: 'saved',
+      fileLoading: false,
+      fileError: null,
+      fileSize: 0,
+      fileTruncated: false,
+      selection: null,
+      quotedSelections: [],
+      pendingAgentReview: null,
+      reviewActive: false,
+      fileThreads: {},
+    });
     try { console.log('[writeStore] after set, state.workspaceRoot =', _get()?.workspaceRoot, '| loom:writeStore =', localStorage.getItem('loom:writeStore')); } catch {}
     if (root) { try { localStorage.setItem('loom:writeWorkspace', root); } catch {} }
   },
@@ -125,6 +150,7 @@ const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
   toggleFileSidebar: () => set((s: any) => ({ fileSidebarOpen: !s.fileSidebarOpen })),
   setInlineCompletionEnabled: (inlineCompletionEnabled) => set({ inlineCompletionEnabled }),
   setRetrievalEnabled: (retrievalEnabled) => set({ retrievalEnabled }),
+  setWritingAgentName: (writingAgentName) => set({ writingAgentName }),
 });
 
 // ============================================================
@@ -152,6 +178,7 @@ interface WriteFilesSlice {
   setFileError: (error: string | null) => void;
   setFileSize: (size: number) => void;
   setFileTruncated: (truncated: boolean) => void;
+  openCreatedTextFile: (path: string, content: string) => void;
   clearActiveFile: () => void;
   refreshTrigger: number;
   triggerRefresh: () => void;
@@ -183,6 +210,19 @@ const createWriteFilesSlice = (set: any, _get: any): WriteFilesSlice => ({
   setFileError: (fileError) => set({ fileError }),
   setFileSize: (fileSize) => set({ fileSize }),
   setFileTruncated: (fileTruncated) => set({ fileTruncated }),
+  openCreatedTextFile: (path, content) => set({
+    activeFilePath: path,
+    activeFileKind: 'text',
+    fileContent: content,
+    saveStatus: 'saved',
+    fileLoading: false,
+    fileError: null,
+    fileSize: new TextEncoder().encode(content).byteLength,
+    fileTruncated: false,
+    selection: null,
+    pendingAgentReview: null,
+    reviewActive: false,
+  }),
   clearActiveFile: () =>
     set({
       activeFilePath: null,
@@ -251,6 +291,7 @@ interface WriteAiSlice {
   setSelection: (sel: WriteEditorSelectionState | null) => void;
   addQuotedSelection: (qs: QuotedSelection) => void;
   removeQuotedSelection: (id: string) => void;
+  removeQuotedSelections: (ids: string[]) => void;
   clearQuotedSelections: () => void;
   addRecentEdit: (edit: RecentEdit) => void;
   setPendingAgentReview: (chunks: DiffChunk[] | null) => void;
@@ -278,6 +319,11 @@ const createWriteAiSlice = (set: any, _get: any): WriteAiSlice => ({
     set((s: any) => ({
       quotedSelections: s.quotedSelections.filter((q: QuotedSelection) => q.id !== id),
     })),
+  removeQuotedSelections: (ids) =>
+    set((s: any) => {
+      const removed = new Set(ids);
+      return { quotedSelections: s.quotedSelections.filter((q: QuotedSelection) => !removed.has(q.id)) };
+    }),
   clearQuotedSelections: () => set({ quotedSelections: [] }),
   addRecentEdit: (edit) =>
     set((s: any) => ({
@@ -343,6 +389,7 @@ export const useWriteStore = create<WriteStore>()(
         shortMaxTokens: state.shortMaxTokens,
         longMaxTokens: state.longMaxTokens,
         retrievalEnabled: state.retrievalEnabled,
+        writingAgentName: state.writingAgentName,
         imageStoragePath: state.imageStoragePath,
         autoSaveIntervalMs: state.autoSaveIntervalMs,
         agentPresetId: state.agentPresetId,

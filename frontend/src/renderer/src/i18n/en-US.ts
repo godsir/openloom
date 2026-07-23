@@ -1423,6 +1423,10 @@ export const enUS: TranslationMap = {
   'fim.model': 'FIM Model',
   'fim.selectModel': 'Select FIM model...',
   'fim.modelUpdated': 'FIM model updated',
+  'fim.probe': 'Test compatibility',
+  'fim.probing': 'Testing…',
+  'fim.probeSuccess': 'FIM compatibility test passed',
+  'fim.probeFailed': 'This model does not support the current FIM endpoint',
 
   // ── Updates ───────────────────────────────────────────────────────
   'updates.found': 'New version {version} available',

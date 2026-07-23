@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react'
 import { useStore } from '../../stores'
-import { useWriteStore } from '../../stores/write'
+import { getWriteThreadKey, useWriteStore } from '../../stores/write'
 import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import { sendMessage } from '../../services/sendMessage'
@@ -12,6 +12,9 @@ import { WriteDocumentPane } from './WriteDocumentPane'
 import { WriteAssistantPanel } from './WriteAssistantPanel'
 import { WriteFileDialogs } from './WriteFileDialogs'
 import styles from './WriteWorkspaceView.module.css'
+import { composeWritePrompt, limitWriteContext } from '../../write/quoted-selection'
+import { resolveAgentPreset } from '../../write/agent-presets'
+import { guardWriteNavigation } from '../../write/navigation-guard'
 
 export const WriteWorkspaceView: React.FC = () => {
   const { t } = useLocale()
@@ -23,9 +26,9 @@ export const WriteWorkspaceView: React.FC = () => {
 
   const {
     workspaceRoot, setWorkspaceRoot, autoSaveIntervalMs, fontSize, setFontSize,
-    activeFilePath, fileContent, saveStatus, setSaveStatus,
+    activeFilePath, fileContent, saveStatus, setSaveStatus, fileTruncated,
     assistantOpen, toggleAssistant, setModalState, showToast, clearToast, toastMessage,
-    fileThreads, setFileThread, removeFileThread,
+    fileThreads, setFileThread, removeFileThread, writingAgentName, retrievalEnabled,
     setFileContent, setFileSize, setFileTruncated,
   } = useWriteStore()
 
@@ -45,45 +48,116 @@ export const WriteWorkspaceView: React.FC = () => {
   // ── Handlers ──
 
   const handleSelectWorkspace = useCallback(async () => {
-    try { const p = await (window as any).loom?.selectFolder?.(); if (p) setWorkspaceRoot(p) } catch {}
-  }, [setWorkspaceRoot])
+    try {
+      const p = await (window as any).loom?.selectFolder?.()
+      if (p && p !== workspaceRoot && await guardWriteNavigation()) setWorkspaceRoot(p)
+    } catch {}
+  }, [workspaceRoot, setWorkspaceRoot])
 
   const handleNewFile = useCallback(() => setModalState('newFile'), [setModalState])
 
   const handleSave = useCallback(async () => {
-    if (!workspaceRoot || !activeFilePath) return
+    if (!workspaceRoot || !activeFilePath || useWriteStore.getState().fileTruncated) return
+    const contentSnapshot = fileContentRef.current
     try {
       setSaveStatus('saving')
-      await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: activeFilePath, content: fileContentRef.current })
-      setSaveStatus('saved')
+      await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: activeFilePath, content: contentSnapshot })
+      setSaveStatus(fileContentRef.current === contentSnapshot ? 'saved' : 'dirty')
     } catch { setSaveStatus('error'); showToast('error', t('write.saveFailed')) }
   }, [workspaceRoot, activeFilePath, setSaveStatus, showToast, t])
 
   const ensureSession = useCallback(async (filePath: string): Promise<string> => {
-    if (fileThreads[filePath]) return fileThreads[filePath]
-    if (pendingSessions.current[filePath]) return pendingSessions.current[filePath]
+    if (!workspaceRoot) throw new Error('No writing workspace selected')
+    const threadKey = getWriteThreadKey(workspaceRoot, filePath)
+    if (fileThreads[threadKey]) return fileThreads[threadKey]
+    if (pendingSessions.current[threadKey]) return pendingSessions.current[threadKey]
     const p = (async () => {
       const sid = await createSession()
       try { await loomRpc('session.rename', { session_id: sid, title: '[写] ' + (filePath.split('/').pop() || filePath) }) } catch {}
-      setFileThread(filePath, sid); return sid
+      const agentName = writingAgentName || 'default'
+      await loomRpc('session.bind_agent', { session_id: sid, agent_config_name: agentName })
+      useStore.getState().setSessionAgentBinding(sid, agentName)
+      setFileThread(threadKey, sid); return sid
     })()
-    pendingSessions.current[filePath] = p
-    try { return await p } finally { delete pendingSessions.current[filePath] }
-  }, [fileThreads, createSession, setFileThread])
+    pendingSessions.current[threadKey] = p
+    try { return await p } finally { delete pendingSessions.current[threadKey] }
+  }, [workspaceRoot, fileThreads, createSession, setFileThread, writingAgentName])
 
   const handleAssistantSend = useCallback(async (text: string) => {
-    if (!activeFilePath || !text.trim()) return
-    const sid = await ensureSession(activeFilePath)
-    const content = `[写作上下文]\n当前文件: ${activeFilePath}\n\n${fileContentRef.current}\n\n[用户指令]\n${text}`
-    await sendMessage({ sessionId: sid, content, permissionMode: 'operate' })
-  }, [activeFilePath, ensureSession])
+    const writeState = useWriteStore.getState()
+    const appState = useStore.getState()
+    const snapshot = {
+      workspaceRoot: writeState.workspaceRoot,
+      filePath: writeState.activeFilePath,
+      fileContent: writeState.fileContent,
+      presetId: writeState.agentPresetId,
+      quotes: [...writeState.quotedSelections],
+      permissionMode: appState.permissionMode,
+      writingAgentName: writeState.writingAgentName,
+      retrievalEnabled: writeState.retrievalEnabled,
+    }
+    if (!snapshot.workspaceRoot || !snapshot.filePath || !text.trim()) return
+    const sid = await ensureSession(snapshot.filePath)
+    const agentName = snapshot.writingAgentName || 'default'
+    await loomRpc('session.bind_agent', { session_id: sid, agent_config_name: agentName })
+    useStore.getState().setSessionAgentBinding(sid, agentName)
+    const persona = resolveAgentPreset(snapshot.presetId)
+    let retrievalContext: string | undefined
+    if (snapshot.retrievalEnabled) {
+      type RagResult = { ok: boolean; results?: Array<{ file_path: string; text: string; score: number }> }
+      let rag = await loomRpc<RagResult>('write.search_workspace', {
+        workspace_root: snapshot.workspaceRoot,
+        query: text.trim(),
+        top_k: 4,
+      })
+      if (!rag.ok) {
+        await loomRpc('write.index_workspace', { workspace_root: snapshot.workspaceRoot })
+        rag = await loomRpc<RagResult>('write.search_workspace', {
+          workspace_root: snapshot.workspaceRoot,
+          query: text.trim(),
+          top_k: 4,
+        })
+      }
+      if (rag.ok && rag.results?.length) {
+        retrievalContext = rag.results
+          .map((item) => `[${item.file_path}]\n${item.text}`)
+          .join('\n\n')
+          .slice(0, 8_000)
+      }
+    }
+    const content = composeWritePrompt(
+      text.trim(),
+      snapshot.filePath,
+      limitWriteContext(snapshot.fileContent),
+      snapshot.quotes.length ? snapshot.quotes : undefined,
+      retrievalContext,
+      persona?.persona,
+    )
+    await sendMessage({ sessionId: sid, content, permissionMode: snapshot.permissionMode })
+    useWriteStore.getState().removeQuotedSelections(snapshot.quotes.map((q) => q.id))
+  }, [ensureSession])
+
+  useEffect(() => {
+    if (!workspaceRoot || !retrievalEnabled) return
+    let cancelled = false
+    loomRpc('write.index_workspace', { workspace_root: workspaceRoot })
+      .catch(() => {})
+      .finally(() => { if (cancelled) return })
+    return () => { cancelled = true }
+  }, [workspaceRoot, retrievalEnabled])
 
   const handleNewChat = useCallback(() => {
-    if (!activeFilePath) return
-    const sid = fileThreads[activeFilePath]
-    if (sid) { evictSession(sid); try { streamBufferManager.clear(sid) } catch {} }
-    removeFileThread(activeFilePath)
-  }, [activeFilePath, fileThreads, evictSession, removeFileThread])
+    if (!workspaceRoot || !activeFilePath) return
+    const threadKey = getWriteThreadKey(workspaceRoot, activeFilePath)
+    const sid = fileThreads[threadKey]
+    if (sid) {
+      streamBufferManager.markCancelled(sid)
+      loomRpc('chat.stop', { session_id: sid }).catch(() => {})
+      evictSession(sid)
+      try { streamBufferManager.clear(sid) } catch {}
+    }
+    removeFileThread(threadKey)
+  }, [workspaceRoot, activeFilePath, fileThreads, evictSession, removeFileThread])
 
   const handleStaleSession = useCallback((dead: string) => {
     for (const [fp, sid] of Object.entries(fileThreads)) { if (sid === dead) removeFileThread(fp) }
@@ -93,16 +167,17 @@ export const WriteWorkspaceView: React.FC = () => {
 
   // Autosave debounce
   useEffect(() => {
-    if (saveStatus !== 'dirty' || !activeFilePath || !workspaceRoot) return
+    if (saveStatus !== 'dirty' || !activeFilePath || !workspaceRoot || fileTruncated) return
     const timer = setTimeout(async () => {
+      const contentSnapshot = fileContentRef.current
       try {
         setSaveStatus('saving')
-        await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: activeFilePath, content: fileContentRef.current })
-        setSaveStatus('saved')
+        await loomRpc('vfs.write_file', { workspace_root: workspaceRoot, path: activeFilePath, content: contentSnapshot })
+        setSaveStatus(fileContentRef.current === contentSnapshot ? 'saved' : 'dirty')
       } catch { setSaveStatus('error'); showToast('error', t('write.saveFailed')) }
     }, autoSaveIntervalMs)
     return () => clearTimeout(timer)
-  }, [fileContent, saveStatus, activeFilePath, workspaceRoot, autoSaveIntervalMs, setSaveStatus, showToast, t])
+  }, [fileContent, saveStatus, activeFilePath, workspaceRoot, autoSaveIntervalMs, fileTruncated, setSaveStatus, showToast, t])
 
   // Ctrl+S
   useEffect(() => {
@@ -137,9 +212,17 @@ export const WriteWorkspaceView: React.FC = () => {
       workspaceRoot,
       fileKind: 'text',
       onContentChanged: (content, size, truncated) => {
+        const current = useWriteStore.getState()
+        if (content === fileContentRef.current) return true
+        if (
+          current.workspaceRoot !== workspaceRoot ||
+          current.activeFilePath !== activeFilePath ||
+          current.saveStatus !== 'saved'
+        ) return false
         setFileContent(content)
         setFileSize(size)
         setFileTruncated(truncated)
+        return true
       },
       onImageChanged: () => {},
       onError: () => {},

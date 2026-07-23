@@ -18,6 +18,15 @@ pub async fn handle(
 ) -> Option<Result<Value, JsonRpcError>> {
     match method {
         "completion.fim" => Some(handle_completion_fim(state, p).await),
+        "completion.fim_probe" => {
+            let mut probe = p.clone();
+            if let Some(obj) = probe.as_object_mut() {
+                obj.insert("prefix".into(), Value::String("The quick ".into()));
+                obj.insert("suffix".into(), Value::String(" fox".into()));
+                obj.insert("max_tokens".into(), Value::from(8));
+            }
+            Some(handle_completion_fim(state, &probe).await)
+        }
         "completion.chat" => Some(handle_completion_chat(state, p).await),
         _ => None,
     }
@@ -59,7 +68,7 @@ fn backend_default_base_url(backend: &ModelBackend) -> &'static str {
         ModelBackend::LmStudio => "http://localhost:1234/v1",
         ModelBackend::Ollama => "http://localhost:11434/v1",
         ModelBackend::Anthropic => "https://api.anthropic.com",
-        ModelBackend::OpenAI => "https://api.openai.com",
+        ModelBackend::OpenAI => "https://api.openai.com/v1",
         ModelBackend::Custom => "http://localhost:8080/v1",
     }
 }
@@ -75,9 +84,16 @@ fn backend_default_key_env(backend: &ModelBackend) -> &'static str {
 }
 
 async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let prefix = p.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
-    let suffix = p.get("suffix").and_then(|v| v.as_str()).unwrap_or("");
-    let max_tokens = p.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(64) as usize;
+    let prefix_raw = p.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
+    let suffix_raw = p.get("suffix").and_then(|v| v.as_str()).unwrap_or("");
+    let max_tokens = (p.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(64) as usize)
+        .clamp(1, 256);
+    let prefix = {
+        let mut chars: Vec<char> = prefix_raw.chars().rev().take(32_000).collect();
+        chars.reverse();
+        chars.into_iter().collect::<String>()
+    };
+    let suffix = suffix_raw.chars().take(16_000).collect::<String>();
 
     if prefix.is_empty() {
         return Ok(serde_json::json!({ "ok": false, "message": "prefix is required" }));
@@ -86,10 +102,15 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
     // 1. Resolve model name: saved FIM config (fresh from disk) → request param → default
     let (saved_model, saved_fim_base_url, saved_fim_key_env) = load_fim_config(state).await;
 
-    let model_name = saved_model
-        .as_deref()
-        .or(p.get("model").and_then(|v| v.as_str()))
-        .unwrap_or("deepseek-chat");
+    let Some(model_name) = p.get("model").and_then(|v| v.as_str())
+        .or(saved_model.as_deref())
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(serde_json::json!({
+            "ok": false,
+            "message": "No FIM model configured. Select a compatible model in Settings."
+        }));
+    };
 
     // 2. Resolve from user's supplier settings (model config)
     let (model, config_base_url, config_key_env, config_backend) =

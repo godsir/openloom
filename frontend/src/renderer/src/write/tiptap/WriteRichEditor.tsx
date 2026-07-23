@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -9,6 +9,8 @@ import { handleImagePaste, handleImageDrop } from './paste-image';
 import { useWriteStore } from '../../stores/write';
 import { useStore } from '../../stores';
 import styles from './WriteRichEditor.module.css';
+import type { WriteBlockType } from '../block-type';
+import type { InlineFormatKind } from '../inline-format';
 
 interface WriteRichEditorProps {
   value: string;
@@ -16,11 +18,25 @@ interface WriteRichEditorProps {
   fontSize?: number;
 }
 
-export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
+export interface RichEditorActiveState {
+  block: WriteBlockType | null;
+  bold: boolean;
+  italic: boolean;
+  strikethrough: boolean;
+  code: boolean;
+}
+
+export interface WriteRichEditorHandle {
+  applyBlock: (type: WriteBlockType) => boolean;
+  toggleInline: (kind: InlineFormatKind) => boolean;
+  getActiveState: () => RichEditorActiveState;
+}
+
+export const WriteRichEditor = forwardRef<WriteRichEditorHandle, WriteRichEditorProps>(function WriteRichEditor({
   value,
   onChange,
   fontSize = 14,
-}) => {
+}, ref) {
   const workspaceRoot = useWriteStore((s) => s.workspaceRoot);
   const lineHeight = useWriteStore((s) => s.lineHeight);
   const openLightbox = useStore((s) => s.openLightbox);
@@ -64,6 +80,7 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
       const lineFrom = textBeforeFrom.split('\n').length - 1;
       const lineTo = textBeforeTo.split('\n').length - 1;
       useWriteStore.getState().setSelection({
+        source: 'rich',
         text,
         from,
         to,
@@ -80,8 +97,9 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
       handlePaste: (_view, event) => {
         if (workspaceRoot && editor) {
           const cd = event.clipboardData;
-          if (cd) {
-            handleImagePaste(editor, cd, workspaceRoot);
+          const hasImage = cd ? Array.from(cd.items).some((item) => item.type.startsWith('image/')) : false;
+          if (cd && hasImage) {
+            void handleImagePaste(editor, cd, workspaceRoot);
             return true;
           }
         }
@@ -89,13 +107,62 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
       },
       handleDrop: (_view, event) => {
         if (workspaceRoot && editor) {
-          handleImageDrop(editor, event as unknown as DragEvent, workspaceRoot);
-          return true;
+          const dragEvent = event as unknown as DragEvent;
+          const hasImage = Array.from(dragEvent.dataTransfer?.files ?? []).some((file) => file.type.startsWith('image/'));
+          if (hasImage) {
+            void handleImageDrop(editor, dragEvent, workspaceRoot);
+            return true;
+          }
         }
         return false;
       },
     },
   });
+
+  useImperativeHandle(ref, () => ({
+    applyBlock: (type) => {
+      if (!editor) return false;
+      const chain = editor.chain().focus();
+      switch (type) {
+        case 'paragraph': return chain.setParagraph().run();
+        case 'heading1': return chain.setHeading({ level: 1 }).run();
+        case 'heading2': return chain.setHeading({ level: 2 }).run();
+        case 'heading3': return chain.setHeading({ level: 3 }).run();
+        case 'quote': return chain.toggleBlockquote().run();
+        case 'bullet': return chain.toggleBulletList().run();
+        case 'ordered': return chain.toggleOrderedList().run();
+        case 'code': return chain.toggleCodeBlock().run();
+      }
+    },
+    toggleInline: (kind) => {
+      if (!editor) return false;
+      const chain = editor.chain().focus();
+      switch (kind) {
+        case 'bold': return chain.toggleBold().run();
+        case 'italic': return chain.toggleItalic().run();
+        case 'strikethrough': return chain.toggleStrike().run();
+        case 'code': return chain.toggleCode().run();
+      }
+    },
+    getActiveState: () => {
+      if (!editor) return { block: null, bold: false, italic: false, strikethrough: false, code: false };
+      const block: WriteBlockType =
+        editor.isActive('heading', { level: 1 }) ? 'heading1' :
+        editor.isActive('heading', { level: 2 }) ? 'heading2' :
+        editor.isActive('heading', { level: 3 }) ? 'heading3' :
+        editor.isActive('blockquote') ? 'quote' :
+        editor.isActive('bulletList') ? 'bullet' :
+        editor.isActive('orderedList') ? 'ordered' :
+        editor.isActive('codeBlock') ? 'code' : 'paragraph';
+      return {
+        block,
+        bold: editor.isActive('bold'),
+        italic: editor.isActive('italic'),
+        strikethrough: editor.isActive('strike'),
+        code: editor.isActive('code'),
+      };
+    },
+  }), [editor]);
 
   // Sync external value changes (e.g., file open, AI apply-edit, mode switch).
   // Skip when the change originated from this editor's own onUpdate so we
@@ -109,7 +176,7 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
     if (value !== undefined) {
       const currentMd = tipTapJsonToMarkdown(editor.getJSON());
       if (currentMd !== value) {
-        editor.commands.setContent(markdownToTipTapJson(value));
+        editor.commands.setContent(markdownToTipTapJson(value), { emitUpdate: false });
       }
     }
   }, [value, editor]);
@@ -122,6 +189,10 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
       dom.style.lineHeight = String(lineHeight);
     }
   }, [fontSize, lineHeight, editor]);
+
+  useEffect(() => () => {
+    useWriteStore.getState().setSelection(null);
+  }, []);
 
   if (!editor) return null;
 
@@ -138,4 +209,4 @@ export const WriteRichEditor: React.FC<WriteRichEditorProps> = ({
       <EditorContent editor={editor} />
     </div>
   );
-};
+});

@@ -318,9 +318,22 @@ async fn handle_config_get_fim(state: &AppState) -> Result<Value, JsonRpcError> 
 // --- config.set_fim ---
 
 async fn handle_config_set_fim(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
-    let model = p.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let base_url = p.get("base_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let api_key_env = p.get("api_key_env").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let existing = state.orchestrator.config_store().fim().await;
+    let model = if p.get("model").is_some() {
+        p.get("model").and_then(|v| v.as_str()).map(|s| s.to_string())
+    } else {
+        existing.model
+    };
+    let base_url = if p.get("base_url").is_some() {
+        p.get("base_url").and_then(|v| v.as_str()).map(|s| s.to_string())
+    } else {
+        existing.base_url
+    };
+    let api_key_env = if p.get("api_key_env").is_some() {
+        p.get("api_key_env").and_then(|v| v.as_str()).map(|s| s.to_string())
+    } else {
+        existing.api_key_env
+    };
     let fim = loom_types::config::unified::FimConfig {
         model,
         base_url,

@@ -7,12 +7,13 @@ interface FileWatchOptions {
   filePath: string;
   workspaceRoot: string;
   fileKind: WriteFileKind;
-  onContentChanged: (content: string, size: number, truncated: boolean) => void;
+  onContentChanged: (content: string, size: number, truncated: boolean) => boolean;
   onImageChanged: (dataUrl: string) => void;
   onError: (error: string) => void;
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let watchGeneration = 0;
 
 /**
  * Start watching a file for external changes using polling.
@@ -20,10 +21,14 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
  */
 export function startWatchingFile(options: FileWatchOptions): void {
   stopWatchingFile();
+  const generation = ++watchGeneration;
 
   let lastContent: string | null = null;
+  let pollInFlight = false;
 
   const poll = async () => {
+    if (pollInFlight) return;
+    pollInFlight = true;
     try {
       const result: { ok: boolean; content: string; size: number; truncated: boolean } =
         await loomRpc('vfs.read_file', {
@@ -31,7 +36,7 @@ export function startWatchingFile(options: FileWatchOptions): void {
           workspace_root: options.workspaceRoot,
         });
 
-      if (!result.ok) return;
+      if (generation !== watchGeneration || !result.ok) return;
 
       // First poll: just set baseline without notifying
       if (lastContent === null) {
@@ -41,11 +46,13 @@ export function startWatchingFile(options: FileWatchOptions): void {
 
       // Compare content to detect external changes
       if (result.content !== lastContent) {
-        lastContent = result.content;
-        options.onContentChanged(result.content, result.size, result.truncated);
+        const accepted = options.onContentChanged(result.content, result.size, result.truncated);
+        if (accepted) lastContent = result.content;
       }
     } catch {
       // Silently ignore poll errors
+    } finally {
+      pollInFlight = false;
     }
   };
 
@@ -54,6 +61,7 @@ export function startWatchingFile(options: FileWatchOptions): void {
 }
 
 export function stopWatchingFile(): void {
+  watchGeneration += 1;
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;

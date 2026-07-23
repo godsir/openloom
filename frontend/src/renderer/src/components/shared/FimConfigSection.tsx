@@ -35,6 +35,8 @@ function sortModels(models: ModelListItem[]): ModelListItem[] {
 export default function FimConfigSection() {
   const { t } = useLocale()
   const [fimModel, setFimModel] = useState('')
+  const [probing, setProbing] = useState(false)
+  const addToast = useStore(s => s.addToast)
   // Subscribe to the global model list kept in sync by ModelConfigPanel
   const models = useStore(s => s.models) as ModelListItem[]
 
@@ -58,7 +60,7 @@ export default function FimConfigSection() {
     () => {
       // FIM is primarily supported by DeepSeek, but any model could potentially work.
       // Include all models so users can experiment.
-      const sorted = sortModels(models)
+      const sorted = sortModels(models.filter(m => m.backend !== 'Anthropic'))
 
       return [
         { value: '', label: t('fim.selectModel') },
@@ -71,6 +73,27 @@ export default function FimConfigSection() {
     },
     [models, t],
   )
+
+  const handleProbe = async () => {
+    if (!fimModel || probing) return
+    setProbing(true)
+    try {
+      const result = await loomRpc<{ ok: boolean; completion?: string; message?: string }>(
+        'completion.fim_probe',
+        { model: fimModel },
+      )
+      if (result.ok) {
+        await rpc('config.set_fim', { model: fimModel }, t('fim.probeSuccess'))
+        invalidateFimCache()
+      } else {
+        throw new Error(result.message || t('fim.probeFailed'))
+      }
+    } catch (error: any) {
+      addToast({ type: 'error', message: error?.message || t('fim.probeFailed') })
+    } finally {
+      setProbing(false)
+    }
+  }
 
   return (
     <div className={styles.visionSection}>
@@ -89,6 +112,14 @@ export default function FimConfigSection() {
           onChange={handleModelChange}
           className={styles.visionModelSelect}
         />
+        <button
+          type="button"
+          onClick={handleProbe}
+          disabled={!fimModel || probing}
+          className={styles.visionTestBtn}
+        >
+          {probing ? t('fim.probing') : t('fim.probe')}
+        </button>
       </div>
     </div>
   )

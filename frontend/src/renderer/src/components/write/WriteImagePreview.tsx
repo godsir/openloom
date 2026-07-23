@@ -11,28 +11,36 @@ export const WriteImagePreview: React.FC = () => {
 
   useEffect(() => {
     if (!activeFilePath || !workspaceRoot) return;
+    let cancelled = false;
     setLoading(true);
     setError(null);
+    setDataUrl(null);
 
     // Try to read the image as data URL via Electron IPC
     const loadImage = async () => {
       try {
         if ((window as any).loom?.readWorkspaceImage) {
           const result = await (window as any).loom.readWorkspaceImage(activeFilePath, workspaceRoot);
-          if (result) {
+          if (cancelled) return;
+          if (typeof result === 'string') {
             setDataUrl(result);
             return;
           }
+          if (result?.ok && typeof result.dataUrl === 'string') {
+            setDataUrl(result.dataUrl);
+            return;
+          }
         }
-        setError('Cannot load image');
+        if (!cancelled) setError('Cannot load image');
       } catch (e: any) {
-        setError(e.message || 'Failed to load image');
+        if (!cancelled) setError(e.message || 'Failed to load image');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     loadImage();
+    return () => { cancelled = true; };
   }, [activeFilePath, workspaceRoot]);
 
   if (loading) {

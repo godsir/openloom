@@ -47,37 +47,39 @@ export default function WriteExportMenu() {
 
     try {
       let handled = false
+      let cancelled = false
       switch (key) {
         case 'markdown': {
-          // Copy markdown source to clipboard
-          if (loom?.copyWriteDocumentAsRichText) {
-            await loom.copyWriteDocumentAsRichText(activeFilePath, '', fileContent)
-            handled = true
+          if (loom?.exportWriteMarkdown) {
+            const result = await loom.exportWriteMarkdown(fileContent, title)
+            handled = result?.ok !== false
+            cancelled = result?.canceled === true
           }
           break
         }
         case 'html': {
           if (loom?.exportWriteHtml) {
-            await loom.exportWriteHtml(html, title)
-            handled = true
+            const result = await loom.exportWriteHtml(html, title)
+            handled = result?.ok !== false
           }
           break
         }
         case 'pdf': {
           if (loom?.exportWritePdf) {
-            await loom.exportWritePdf(html, title)
-            handled = true
+            const result = await loom.exportWritePdf(html, title)
+            handled = result?.ok !== false
           }
           break
         }
         case 'docx': {
           if (loom?.exportWriteDocx) {
-            await loom.exportWriteDocx(html, title)
-            handled = true
+            const result = await loom.exportWriteDocx(html, title)
+            handled = result?.ok !== false
           }
           break
         }
       }
+      if (cancelled) return
       // 导出成功/不可用/失败都给出可见反馈，而非静默（A21）
       if (handled) {
         showToast('success', t('write.exportedOk', { format: formatLabel }))

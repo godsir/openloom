@@ -6,15 +6,12 @@ import { EditorState, Compartment } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
-import { autocompletion } from '@codemirror/autocomplete'
 import { closeBrackets } from '@codemirror/autocomplete'
 import { useWriteStore } from '../../stores/write'
 import { useStore } from '../../stores'
-import { buildFimCompletionSource } from '../../services/fimSource'
+import { buildFimGhostTextExtension } from '../../services/fimGhostText'
 import { createLivePreviewPlugin } from '../../write/markdown-live-preview'
 import type { WritePreviewMode } from '../../stores/write'
-
-const fimCompletionSource = buildFimCompletionSource()
 
 interface WriteMarkdownEditorProps {
   value: string
@@ -23,6 +20,7 @@ interface WriteMarkdownEditorProps {
   fontSize?: number
   /** When 'live', enables markdown syntax hiding via CM6 decorations */
   previewMode?: WritePreviewMode
+  readOnly?: boolean
 }
 
 /**
@@ -41,6 +39,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
   placeholder = '',
   fontSize = 14,
   previewMode,
+  readOnly = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -49,6 +48,8 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
   const fimCompartment = useRef(new Compartment())
   const themeCompartment = useRef(new Compartment())
   const liveCompartment = useRef(new Compartment())
+  const editableCompartment = useRef(new Compartment())
+  const fimGhostExtension = useRef(buildFimGhostTextExtension())
 
   // FIM 开关 — 同时检查 write store 和主 store (主 store 的 fimEnabled 是全局开关)
   const inlineCompletionEnabled = useWriteStore(s => s.inlineCompletionEnabled)
@@ -111,6 +112,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
         if (text && sel.from !== sel.to) {
           const line = update.state.doc.lineAt(sel.from)
           useWriteStore.getState().setSelection({
+            source: 'markdown',
             text,
             from: sel.from,
             to: sel.to,
@@ -125,13 +127,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
       }
     })
 
-    const fimExtension = fimEnabled
-      ? autocompletion({
-          override: [fimCompletionSource],
-          defaultKeymap: true,
-          activateOnTyping: true,
-        })
-      : []
+    const fimExtension = fimEnabled ? fimGhostExtension.current : []
 
     const extensions: any[] = [
       lineNumbers(),
@@ -156,7 +152,7 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
         },
       ]),
       updateListener,
-      EditorView.editable.of(true),
+      editableCompartment.current.of(EditorView.editable.of(!readOnly)),
       baseTheme,
       cmPlaceholder(placeholder),
       // Compartments for dynamic reconfiguration
@@ -189,16 +185,18 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
     if (!view) return
     view.dispatch({
       effects: fimCompartment.current.reconfigure(
-        fimEnabled
-          ? autocompletion({
-              override: [fimCompletionSource],
-              defaultKeymap: true,
-              activateOnTyping: true,
-            })
-          : []
+        fimEnabled ? fimGhostExtension.current : []
       ),
     })
-  }, [inlineCompletionEnabled])
+  }, [fimEnabled])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: editableCompartment.current.reconfigure(EditorView.editable.of(!readOnly)),
+    })
+  }, [readOnly])
 
   // Toggle Live preview decorations
   useEffect(() => {

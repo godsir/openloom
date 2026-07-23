@@ -1427,6 +1427,10 @@ export const zhCN: TranslationMap = {
   'fim.model': 'FIM 模型',
   'fim.selectModel': '选择 FIM 模型...',
   'fim.modelUpdated': 'FIM 模型已更新',
+  'fim.probe': '测试兼容性',
+  'fim.probing': '测试中…',
+  'fim.probeSuccess': 'FIM 兼容性测试通过',
+  'fim.probeFailed': '该模型不支持当前 FIM 接口',
 
   // ── Updates ───────────────────────────────────────────────────────
   'updates.found': '发现新版本 {version}',

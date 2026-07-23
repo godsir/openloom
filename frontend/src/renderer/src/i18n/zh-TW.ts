@@ -1418,6 +1418,10 @@ export const zhTW: TranslationMap = {
   'fim.model': 'FIM 模型',
   'fim.selectModel': '選擇 FIM 模型...',
   'fim.modelUpdated': 'FIM 模型已更新',
+  'fim.probe': '測試相容性',
+  'fim.probing': '測試中…',
+  'fim.probeSuccess': 'FIM 相容性測試通過',
+  'fim.probeFailed': '此模型不支援目前的 FIM 介面',
 
   // ── Updates ───────────────────────────────────────────────────────
   'updates.found': '发现新版本 {version}',

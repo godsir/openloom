@@ -43,6 +43,7 @@ export interface LoomApi {
   readWorkspaceImage: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean; dataUrl?: string; mimeType?: string; message?: string}>
   readWorkspaceBinary: (filePath: string, workspaceRoot: string) => Promise<{ok: boolean; data?: string; size?: number; message?: string}>
   exportWriteHtml: (html: string, title: string) => Promise<{ok: boolean; path?: string; error?: string}>
+  exportWriteMarkdown: (markdown: string, title: string) => Promise<{ok: boolean; path?: string; canceled?: boolean; error?: string}>
   exportWritePdf: (html: string, title: string) => Promise<{ok: boolean; path?: string; error?: string}>
   exportWriteDocx: (html: string, title: string) => Promise<{ok: boolean; path?: string; error?: string}>
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => Promise<{ok: boolean; message?: string}>
@@ -199,6 +200,7 @@ contextBridge.exposeInMainWorld('loom', {
   readWorkspaceImage: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:read-image', { filePath, workspaceRoot }),
   readWorkspaceBinary: (filePath: string, workspaceRoot: string) => ipcRenderer.invoke('write:read-binary', { filePath, workspaceRoot }),
   exportWriteHtml: (html: string, title: string) => ipcRenderer.invoke('write:export-html-enhanced', html, title),
+  exportWriteMarkdown: (markdown: string, title: string) => ipcRenderer.invoke('write:export-markdown', markdown, title),
   exportWritePdf: (html: string, title: string) => ipcRenderer.invoke('write:export-pdf', html, title),
   exportWriteDocx: (html: string, title: string) => ipcRenderer.invoke('write:export-docx', html, title),
   copyWriteDocumentAsRichText: (filePath: string, workspaceRoot: string, content: string) => ipcRenderer.invoke('write:copy-rich-text', { filePath, workspaceRoot, content }),

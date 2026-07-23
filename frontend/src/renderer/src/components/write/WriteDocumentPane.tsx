@@ -4,9 +4,10 @@ import { WriteMarkdownEditor } from './WriteMarkdownEditor'
 import { WriteMarkdownPreview } from './WriteMarkdownPreview'
 import { WriteImagePreview } from './WriteImagePreview'
 import { WriteWorkspaceStart } from './WriteWorkspaceStart'
-import { WriteRichEditor } from '../../write/tiptap/WriteRichEditor'
+import { WriteRichEditor, type WriteRichEditorHandle } from '../../write/tiptap/WriteRichEditor'
 import { WritePdfViewer } from './WritePdfViewer'
 import { WriteInlineAgent } from './WriteInlineAgent'
+import { getRenderSafety } from '../../write/write-render-safety'
 
 const LARGE_FILE_THRESHOLD = 300 * 1024
 
@@ -75,6 +76,7 @@ function resolvePreviewMode(previewMode: WritePreviewMode, fileSize: number): Wr
 }
 
 export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWorkspace, onSendToAssistant }) => {
+  const richEditorRef = useRef<WriteRichEditorHandle>(null)
   const activeFilePath = useWriteStore(s => s.activeFilePath)
   const activeFileKind = useWriteStore(s => s.activeFileKind)
   const fileContent = useWriteStore(s => s.fileContent)
@@ -84,21 +86,30 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   // Detect HTML files for raw rendering (bypass markdown-it)
   const isHtmlFile = activeFilePath ? /\.html?$/i.test(activeFilePath) : false
   const fileSize = useWriteStore(s => s.fileSize)
+  const fileTruncated = useWriteStore(s => s.fileTruncated)
   const previewMode = useWriteStore(s => s.previewMode)
   const fontSize = useWriteStore(s => s.fontSize)
   const workspaceRoot = useWriteStore(s => s.workspaceRoot)
   const setFileContent = useWriteStore(s => s.setFileContent)
   const setSaveStatus = useWriteStore(s => s.setSaveStatus)
+  const renderSafety = getRenderSafety({
+    isMarkdown: !!activeFilePath && /\.(md|markdown)$/i.test(activeFilePath),
+    contentLength: fileContent.length,
+    fileSize,
+    truncated: fileTruncated,
+  })
 
   const handleChange = useCallback((value: string) => {
+    if (renderSafety.readOnly) return
     setFileContent(value)
     setSaveStatus('dirty')
-  }, [setFileContent, setSaveStatus])
+  }, [renderSafety.readOnly, setFileContent, setSaveStatus])
 
   const handleApplyEdit = useCallback((newContent: string) => {
+    if (renderSafety.readOnly) return
     setFileContent(newContent)
     setSaveStatus('dirty')
-  }, [setFileContent, setSaveStatus])
+  }, [renderSafety.readOnly, setFileContent, setSaveStatus])
 
   if (!activeFilePath) {
     return <WriteWorkspaceStart onSelectWorkspace={onSelectWorkspace} />
@@ -130,13 +141,20 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
     return <WritePdfViewer filePath={activeFilePath} workspaceRoot={workspaceRoot || ''} />
   }
 
-  const effectiveMode = resolvePreviewMode(previewMode, fileSize)
+  const effectiveMode = renderSafety.readOnly ? 'source' : resolvePreviewMode(previewMode, fileSize)
 
   if (effectiveMode === 'rich') {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
-        <WriteRichEditor value={fileContent} onChange={handleChange} fontSize={fontSize} />
+        <WriteInlineAgent
+          editorValue={fileContent}
+          onApplyEdit={handleApplyEdit}
+          onSendToAssistant={onSendToAssistant}
+          onRichBlockType={(type) => { richEditorRef.current?.applyBlock(type) }}
+          onRichInlineFormat={(kind) => { richEditorRef.current?.toggleInline(kind) }}
+          getRichActiveState={() => richEditorRef.current?.getActiveState()}
+        />
+        <WriteRichEditor ref={richEditorRef} value={fileContent} onChange={handleChange} fontSize={fontSize} />
       </div>
     )
   }
@@ -170,8 +188,13 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
-      <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} />
+      {renderSafety.notice === 'truncated' && (
+        <div style={{ padding: '7px 12px', fontSize: 12, color: 'var(--text-warning)', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+          文件仅加载了部分内容，为防止覆盖原文件，当前已设为只读。
+        </div>
+      )}
+      {!renderSafety.readOnly && <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />}
+      <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} readOnly={renderSafety.readOnly} />
     </div>
   )
 }

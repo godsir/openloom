@@ -1,15 +1,16 @@
 import { CompletionContext } from '@codemirror/autocomplete'
 import { useStore } from '../stores'
+import { useWriteStore } from '../stores/write'
 import { requestFimCompletion } from './completion'
 
 /** Debounce helper: last-write-wins, with a leading edge check */
-function createDebouncer(delayMs: number) {
+function createDebouncer() {
   let timerId: ReturnType<typeof setTimeout> | null = null
   let lastResolve: ((v: string | null) => void) | null = null
-  let pendingCount = 0
+  let requestSeq = 0
 
-  return function debouncedRun(prefix: string, suffix: string, maxTokens: number): Promise<string | null> {
-    pendingCount++
+  return function debouncedRun(prefix: string, suffix: string, maxTokens: number, delayMs: number): Promise<string | null> {
+    const seq = ++requestSeq
     return new Promise((resolve) => {
       // Cancel previous pending call
       if (timerId !== null) {
@@ -21,7 +22,7 @@ function createDebouncer(delayMs: number) {
         timerId = null
         try {
           const result = await requestFimCompletion(prefix, suffix, maxTokens)
-          resolve(result.ok && result.completion ? result.completion.trim() : null)
+          resolve(seq === requestSeq && result.ok && result.completion ? result.completion : null)
         } catch {
           resolve(null)
         }
@@ -29,8 +30,6 @@ function createDebouncer(delayMs: number) {
     })
   }
 }
-
-const debouncedFim = createDebouncer(500)
 
 /**
  * Shared FIM (Fill-in-the-Middle) completion source.
@@ -40,6 +39,7 @@ const debouncedFim = createDebouncer(500)
  * or manually via Ctrl+Space.
  */
 export function buildFimCompletionSource() {
+  const debouncedFim = createDebouncer()
   return async (context: CompletionContext) => {
     const state = useStore.getState()
     const appMode = state.appMode
@@ -50,14 +50,18 @@ export function buildFimCompletionSource() {
     const view = context.view
     const pos = context.pos
     const doc = view.state.doc.toString()
-    const prefix = doc.slice(0, pos)
-    const suffix = doc.slice(pos)
+    const prefix = doc.slice(Math.max(0, pos - 8_000), pos)
+    const suffix = doc.slice(pos, Math.min(doc.length, pos + 4_000))
 
     if (prefix.length < 10 && !context.explicit) return null
     if (prefix.length < 3) return null // never complete for empty/almost-empty
 
     try {
-      const text = await debouncedFim(prefix, suffix, 64)
+      const writeConfig = useWriteStore.getState()
+      const maxTokens = appMode === 'write' ? writeConfig.shortMaxTokens : 64
+      const delayMs = appMode === 'write' ? writeConfig.shortDebounceMs : 500
+      const text = await debouncedFim(prefix, suffix, maxTokens, delayMs)
+      if (context.aborted) return null
       if (!text || text.length === 0) return null
       return {
         from: pos,
