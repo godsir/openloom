@@ -831,6 +831,7 @@ export const zhCN: TranslationMap = {
   'write.selectDirStart': '选择工作目录开始写作',
   'write.selectOrNewFilePrompt': '选择文件或新建文件',
   'write.aiWritingAssistant': 'AI 写作助手',
+  'write.quotedCount': '已引用 {count} 段内容',
   'write.aiContextWithFile': '已打开，可在下方输入指令让 AI 帮你处理文本。',
   'write.aiContextNoFile': '打开一个文件后，AI 可以帮你润色、翻译、扩写、总结等。',
   'write.quickCommands': '快捷指令',

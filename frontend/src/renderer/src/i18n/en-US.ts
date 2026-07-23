@@ -827,6 +827,7 @@ export const enUS: TranslationMap = {
   'write.selectDirStart': 'Select a workspace directory to start writing',
   'write.selectOrNewFilePrompt': 'Select or create a file',
   'write.aiWritingAssistant': 'AI Writing Assistant',
+  'write.quotedCount': '{count} quoted section(s)',
   'write.aiContextWithFile': 'Opened. Enter instructions below and let AI help with your text.',
   'write.aiContextNoFile': 'Open a file and AI can help polish, translate, expand, summarize, etc.',
   'write.quickCommands': 'Quick Commands',

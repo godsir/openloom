@@ -826,6 +826,7 @@ export const zhTW: TranslationMap = {
   'write.selectDirStart': '選擇工作目錄开始写作',
   'write.selectOrNewFilePrompt': '選擇檔案或新增檔案',
   'write.aiWritingAssistant': 'AI 写作助手',
+  'write.quotedCount': '已引用 {count} 段內容',
   'write.aiContextWithFile': '已開啟，可在下方輸入指令让 AI 帮你處理文字。',
   'write.aiContextNoFile': '開啟一个檔案后，AI 可以帮你润色、翻译、擴写、总结等。',
   'write.quickCommands': '快捷指令',

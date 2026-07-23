@@ -5,7 +5,7 @@ import { loomRpc } from '../../services/jsonrpc'
 import { streamBufferManager } from '../../services/stream-buffer'
 import { resolveAgentPreset } from '../../write/agent-presets'
 import { useLocale } from '../../i18n'
-import { IconSparkles, IconSend, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck, IconStopCircle } from '../../utils/icons'
+import { IconSparkles, IconSend, IconWorkflow, IconPenLine, IconScanSearch, IconClipboardCheck, IconStopCircle, IconQuote, IconX } from '../../utils/icons'
 import WriteChatPanel from './WriteChatPanel'
 import styles from './WriteAssistantPanel.module.css'
 
@@ -37,6 +37,8 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
   const workspaceRoot = useWriteStore(s => s.workspaceRoot)
   const agentPresetId = useWriteStore(s => s.agentPresetId)
   const setAgentPresetId = useWriteStore(s => s.setAgentPresetId)
+  const quotedSelections = useWriteStore(s => s.quotedSelections)
+  const removeQuotedSelection = useWriteStore(s => s.removeQuotedSelection)
 
   const [assistantText, setAssistantText] = useState('')
 
@@ -81,11 +83,6 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
 
   return (
     <div className={styles.panel}>
-      <div className={styles.header}>
-        <IconSparkles size={13} />
-        <span>{t('write.aiWritingAssistant')}</span>
-      </div>
-
       {/* Persona switcher */}
       <div className={styles.personaRow}>
         <button
@@ -123,6 +120,34 @@ export const WriteAssistantPanel: React.FC<WriteAssistantPanelProps> = ({
       />
 
       <div className={styles.footer}>
+        {quotedSelections.length > 0 && (
+          <div className={styles.quoteTray}>
+            <div className={styles.quoteTrayHeader}>
+              <IconQuote size={12} />
+              <span>{t('write.quotedCount', { count: quotedSelections.length })}</span>
+            </div>
+            <div className={styles.quoteList}>
+              {quotedSelections.map((quote) => (
+                <div className={styles.quoteTip} key={quote.id}>
+                  <div className={styles.quoteText}>
+                    <span className={styles.quoteSource}>
+                      {quote.filePath.split('/').pop()} · L{quote.lineFrom + 1}–{quote.lineTo + 1}
+                    </span>
+                    <span className={styles.quotePreview}>{quote.text}</span>
+                  </div>
+                  <button
+                    className={styles.quoteRemove}
+                    onClick={() => removeQuotedSelection(quote.id)}
+                    aria-label={t('common.removeQuote')}
+                    title={t('common.removeQuote')}
+                  >
+                    <IconX size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className={styles.inputRow}>
           <input
             className={styles.input}

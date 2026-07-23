@@ -14,6 +14,9 @@ export interface LoomApi {
   windowMaximize: () => void
   windowClose: () => void
   windowIsMaximized: () => Promise<boolean>
+  writeAssistantWindowMinimize: () => void
+  writeAssistantWindowMaximize: () => void
+  writeAssistantWindowClose: () => void
   getPreference: <T>(key: string, fallback: T) => Promise<T>
   setPreference: (key: string, value: unknown) => Promise<void>
   checkForUpdates: () => Promise<void>
@@ -137,6 +140,9 @@ contextBridge.exposeInMainWorld('loom', {
   windowMaximize: () => { ipcRenderer.invoke('window-maximize') },
   windowClose: () => { ipcRenderer.invoke('window-close') },
   windowIsMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  writeAssistantWindowMinimize: () => { ipcRenderer.invoke('write-assistant-window-minimize') },
+  writeAssistantWindowMaximize: () => { ipcRenderer.invoke('write-assistant-window-maximize') },
+  writeAssistantWindowClose: () => { ipcRenderer.invoke('write-assistant-window-close') },
   getPreference: <T>(key: string, fallback: T) => ipcRenderer.invoke('get-preference', key, fallback),
   setPreference: (key: string, value: unknown) => ipcRenderer.invoke('set-preference', key, value),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

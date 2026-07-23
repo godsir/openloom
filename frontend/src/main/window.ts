@@ -4,6 +4,7 @@ import { getStoreKey } from './store'
 import { isSafeExternalWindowUrl, isWriteAssistantWindowRequest } from './write-assistant-window'
 
 let mainWindow: BrowserWindow | null = null
+let writeAssistantWindow: BrowserWindow | null = null
 
 function getIconPath(): string {
   if (app.isPackaged) {
@@ -66,6 +67,7 @@ export function createMainWindow(port: number): BrowserWindow {
           height: 640,
           minWidth: 320,
           minHeight: 400,
+          frame: false,
           resizable: true,
           minimizable: true,
           maximizable: true,
@@ -87,6 +89,10 @@ export function createMainWindow(port: number): BrowserWindow {
   mainWindow.webContents.on('did-create-window', (childWindow, details) => {
     if (!isWriteAssistantWindowRequest(details.url, details.frameName)) return
 
+    writeAssistantWindow = childWindow
+    childWindow.on('closed', () => {
+      if (writeAssistantWindow === childWindow) writeAssistantWindow = null
+    })
     childWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (isSafeExternalWindowUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
@@ -150,4 +156,20 @@ export function createMainWindow(port: number): BrowserWindow {
 
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow
+}
+
+export function minimizeWriteAssistantWindow(): void {
+  writeAssistantWindow?.minimize()
+}
+
+export function maximizeWriteAssistantWindow(): void {
+  if (writeAssistantWindow?.isMaximized()) {
+    writeAssistantWindow.unmaximize()
+  } else {
+    writeAssistantWindow?.maximize()
+  }
+}
+
+export function closeWriteAssistantWindow(): void {
+  writeAssistantWindow?.close()
 }

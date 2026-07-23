@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { IconSparkles } from '../../utils/icons'
+import WindowControls from '../app/WindowControls'
 import styles from './WriteAssistantWindow.module.css'
 
 const pendingCloseTimers = new WeakMap<Window, ReturnType<typeof setTimeout>>()
@@ -74,5 +76,21 @@ export const WriteAssistantWindow: React.FC<WriteAssistantWindowProps> = ({
     }
   }, [onClose, popup, title])
 
-  return container ? createPortal(children, container) : null
+  return container ? createPortal(
+    <div className={styles.shell}>
+      <header className={styles.titlebar}>
+        <div className={styles.title}>
+          <IconSparkles size={14} />
+          <span>{title}</span>
+        </div>
+        <WindowControls
+          onMinimize={() => window.loom.writeAssistantWindowMinimize()}
+          onMaximize={() => window.loom.writeAssistantWindowMaximize()}
+          onClose={() => window.loom.writeAssistantWindowClose()}
+        />
+      </header>
+      <main className={styles.content}>{children}</main>
+    </div>,
+    container,
+  ) : null
 }

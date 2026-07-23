@@ -3,6 +3,7 @@ import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
 import { checkForUpdates, configureUpdaterProxy, downloadUpdate, cancelDownloadUpdate, installUpdate, getUpdateChannel, setUpdateChannel } from '../updater'
 import { restartEngine } from '../engine'
+import { closeWriteAssistantWindow, maximizeWriteAssistantWindow, minimizeWriteAssistantWindow } from '../window'
 import { getGitBranches, switchGitBranch, createAndSwitchGitBranch, getUncommittedChanges, gitCommit, gitPush } from '../services/git-service'
 
 export function registerAppIpc(): void {
@@ -40,6 +41,10 @@ export function registerAppIpc(): void {
   ipcMain.handle('window-is-maximized', (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
   })
+
+  ipcMain.handle('write-assistant-window-minimize', () => minimizeWriteAssistantWindow())
+  ipcMain.handle('write-assistant-window-maximize', () => maximizeWriteAssistantWindow())
+  ipcMain.handle('write-assistant-window-close', () => closeWriteAssistantWindow())
 
   ipcMain.handle('get-preference', (_, key: string, fallback: unknown) => {
     return getStoreKey(key, fallback)
