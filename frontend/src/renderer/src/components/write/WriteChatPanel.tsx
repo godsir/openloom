@@ -7,6 +7,7 @@ import AssistantMessage from '../chat/AssistantMessage'
 import UserMessage from '../chat/UserMessage'
 import { IconChevronDown, IconFileText, IconExternalLink, IconPlus } from '../../utils/icons'
 import styles from './WriteChatPanel.module.css'
+import { getWriteMessageDisplayText } from '../../write/write-message-display'
 
 const EMPTY: never[] = []
 
@@ -257,19 +258,32 @@ export default function WriteChatPanel({
       </div>
 
       <div className={styles.scrollArea} ref={scrollRef} onScroll={handleScroll}>
-        {messages.map((msg: any, idx: number) => (
+        {messages.map((msg: any, idx: number) => {
+          const displayMessage = msg.role === 'user'
+            ? {
+                ...msg,
+                blocks: msg.blocks.map((block: any) => block.type === 'text'
+                  ? {
+                      ...block,
+                      source: getWriteMessageDisplayText((block.source as string) || ''),
+                      html: '',
+                    }
+                  : block),
+              }
+            : msg
+          return (
           <div key={msg.id} className={styles.messageItem}>
             {msg.role === 'user'
-              ? <UserMessage message={msg} />
+              ? <UserMessage message={displayMessage} />
               : <AssistantMessage
-                  message={msg}
+                  message={displayMessage}
                   sessionId={sessionId}
                   isStreaming={isStreaming}
                   isStreamingActive={isStreaming && idx === messages.length - 1}
                 />
             }
           </div>
-        ))}
+        )})}
         {error && (
           <div className={styles.errorBlock}>
             <span className={styles.errorIcon}>!</span>
@@ -277,8 +291,6 @@ export default function WriteChatPanel({
           </div>
         )}
 
-        {/* Bottom anchor for auto-scroll */}
-        <div ref={(el) => { if (el && autoScrollRef.current) el.scrollIntoView?.({ block: 'end' }) }} />
       </div>
 
       {showScrollBtn && messages.length > 0 && (
