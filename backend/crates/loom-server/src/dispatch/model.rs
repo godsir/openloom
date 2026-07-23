@@ -218,6 +218,10 @@ async fn handle_model_config_update(state: &AppState, p: &Value) -> Result<Value
             .and_then(|v| v.as_u64())
             .map(|v| v as usize)
             .unwrap_or(existing.context_size),
+        compact_mode: p
+            .get("compact_mode")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(existing.compact_mode),
         max_output_tokens: p
             .get("max_output_tokens")
             .and_then(|v| v.as_u64())
