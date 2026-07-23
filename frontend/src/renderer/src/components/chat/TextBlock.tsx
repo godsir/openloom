@@ -5,6 +5,7 @@ import { sanitizeHtml } from '../../utils/markdown-sanitizer'
 import { renderMermaidDiagram } from '../../utils/mermaid-renderer'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
+import { copyText } from '../../services/clipboard'
 
 const IMAGE_EXT = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)(\?.*)?$/i
 
@@ -35,7 +36,7 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
       const wrapper = (copyBtn as HTMLElement).closest('.code-block-wrapper')
       const codeEl = wrapper?.querySelector('code')
       const text = codeEl?.textContent || ''
-      navigator.clipboard.writeText(text).then(() => {
+      copyText(text).then(() => {
         const btn = copyBtn as HTMLElement
         const original = btn.textContent
         btn.textContent = t('common.copied', '已复制')

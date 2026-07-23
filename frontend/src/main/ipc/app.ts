@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, app, Notification } from 'electron'
+import { ipcMain, BrowserWindow, app, Notification, clipboard } from 'electron'
 import * as path from 'path'
 import { getStoreKey, setStoreKey } from '../store'
 import { checkForUpdates, configureUpdaterProxy, downloadUpdate, cancelDownloadUpdate, installUpdate, getUpdateChannel, setUpdateChannel } from '../updater'
@@ -45,6 +45,9 @@ export function registerAppIpc(): void {
   ipcMain.handle('write-assistant-window-minimize', () => minimizeWriteAssistantWindow())
   ipcMain.handle('write-assistant-window-maximize', () => maximizeWriteAssistantWindow())
   ipcMain.handle('write-assistant-window-close', () => closeWriteAssistantWindow())
+  ipcMain.handle('clipboard-write-text', (_event, text: string) => {
+    clipboard.writeText(text)
+  })
 
   ipcMain.handle('get-preference', (_, key: string, fallback: unknown) => {
     return getStoreKey(key, fallback)

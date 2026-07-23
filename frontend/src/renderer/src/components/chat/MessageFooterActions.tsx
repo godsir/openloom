@@ -2,6 +2,7 @@ import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import { sendMessage } from '../../services/sendMessage'
+import { copyText } from '../../services/clipboard'
 import { IconCopy, IconTrash, IconRefresh, IconRotateCcw } from '../../utils/icons'
 import type { ContentBlock } from '../../stores/chat'
 import styles from './MessageFooterActions.module.css'
@@ -35,7 +36,7 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
   const thinkCount = blocks.filter(b => b.type === 'thinking').length
   const totalTools = toolCount + skillCount
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     const msgs = useStore.getState().messagesBySession.get(currentSessionId || '')
     const msg = msgs?.find((m) => m.id === messageId)
     if (!msg) return
@@ -44,7 +45,7 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
       .map((b) => (b.source as string) || (b.html as string) || '')
       .join('\n')
     if (text) {
-      navigator.clipboard.writeText(text)
+      await copyText(text)
       useStore.getState().showIslandTransient(t('island.copied'))
     }
   }

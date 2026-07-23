@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { ContentBlock } from '../../stores/chat'
 import { useLocale } from '../../i18n'
 import { IconZap, IconCheck, IconLoader, IconXCircle, IconChevronRight, IconChevronDown } from '../../utils/icons'
+import { copyText } from '../../services/clipboard'
 import styles from './ToolGroupBlock.module.css'
 
 interface ToolCall {
@@ -49,7 +50,7 @@ export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
 
   const copyResult = (tool: ToolCall) => {
     if (!tool.result) return
-    navigator.clipboard.writeText(tool.result).then(() => {
+    copyText(tool.result).then(() => {
       setCopiedId(tool.id)
       setTimeout(() => setCopiedId(prev => (prev === tool.id ? null : prev)), 1500)
     })
