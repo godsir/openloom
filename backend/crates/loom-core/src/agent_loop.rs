@@ -178,6 +178,16 @@ pub struct AgentLoopConfig {
 }
 
 impl AgentLoopConfig {
+    /// 是否对该轮活跃模型启用精简模式（从 active model config 读 compact_mode）。
+    /// 不写死 backend：任何模型勾选 compact_mode 都生效。无活跃模型时返回 false。
+    pub fn compact_mode(&self) -> bool {
+        self.model_configs
+            .iter()
+            .find(|c| Some(c.name.as_str()) == self.active_model_name.as_deref())
+            .map(|c| c.compact_mode)
+            .unwrap_or(false)
+    }
+
     /// Effective context window in tokens.
     ///
     /// When the model's `context_size` is unknown we fall back to 100 K which
@@ -817,6 +827,10 @@ async fn run_agent_turn_inner(
         let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
         tools.retain(|t| allowed_set.contains(t.name.as_str()));
     }
+    // 精简模式：不挂工具（本地小窗口场景不调工具，省掉全套工具 schema）
+    if config.compact_mode() {
+        tools.clear();
+    }
     let keep_recent_pct = 0.25_f32;
     let cw = config.effective_context_window();
     let history_budget = (cw as f32 * keep_recent_pct) as usize;
@@ -832,7 +846,7 @@ async fn run_agent_turn_inner(
     let mut messages = assembler.build(opts)?;
     // Inject few-shot examples as additional system messages after the stable
     // prefix (index 0) — each shot becomes a separate System message.
-    if !config.few_shots.is_empty() {
+    if !config.few_shots.is_empty() && !config.compact_mode() {
         for (i, shot) in config.few_shots.iter().enumerate() {
             messages.insert(
                 1 + i,
@@ -850,7 +864,8 @@ async fn run_agent_turn_inner(
     // frequently-changing content out of the KV-cache so cache hit rates
     // stay high across turns.
     if let Some(ref dc) = config.dynamic_context
-        && !dc.is_empty() {
+        && !dc.is_empty()
+        && !config.compact_mode() {
             let insert_pos = 1 + config.few_shots.len();
             messages.insert(
                 insert_pos,
@@ -864,7 +879,8 @@ async fn run_agent_turn_inner(
         }
     // Inject todo context (after dynamic_context, before user/assistant history)
     if let Some(ref tc) = config.todo_context
-        && !tc.is_empty() {
+        && !tc.is_empty()
+        && !config.compact_mode() {
             let insert_pos = 1
                 + config.few_shots.len()
                 + config
@@ -1774,6 +1790,10 @@ async fn run_agent_turn_streaming_inner(
         let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
         all_tools.retain(|t| allowed_set.contains(t.name.as_str()));
     }
+    // 精简模式：不挂工具（本地小窗口场景不调工具，省掉全套工具 schema）
+    if config.compact_mode() {
+        all_tools.clear();
+    }
     let mut tools = if config.lazy_tools {
         // Include use_skill in initial tools so the LLM can directly invoke
         // skills from the Available Skills list without an extra request_tools hop.
@@ -1800,7 +1820,7 @@ async fn run_agent_turn_streaming_inner(
     let mut messages = assembler.build(opts)?;
     // Inject few-shot examples as additional system messages after the stable
     // prefix (index 0) — each shot becomes a separate System message.
-    if !config.few_shots.is_empty() {
+    if !config.few_shots.is_empty() && !config.compact_mode() {
         for (i, shot) in config.few_shots.iter().enumerate() {
             messages.insert(
                 1 + i,
@@ -1818,7 +1838,8 @@ async fn run_agent_turn_streaming_inner(
     // frequently-changing content out of the KV-cache so cache hit rates
     // stay high across turns.
     if let Some(ref dc) = config.dynamic_context
-        && !dc.is_empty() {
+        && !dc.is_empty()
+        && !config.compact_mode() {
             let insert_pos = 1 + config.few_shots.len();
             messages.insert(
                 insert_pos,
@@ -1855,7 +1876,8 @@ async fn run_agent_turn_streaming_inner(
         }
     // Inject todo context (after dynamic_context, before user/assistant history)
     if let Some(ref tc) = config.todo_context
-        && !tc.is_empty() {
+        && !tc.is_empty()
+        && !config.compact_mode() {
             let insert_pos = 1
                 + config.few_shots.len()
                 + config
@@ -3324,6 +3346,40 @@ async fn llm_compress_large_outputs(
     }
     if compressed > 0 {
         tracing::info!(compressed, "LLM semantic compression applied");
+    }
+}
+
+#[cfg(test)]
+mod compact_mode_tests {
+    use super::*;
+    use loom_types::{ModelConfig, ModelBackend};
+
+    fn cfg_with(compact: bool) -> AgentLoopConfig {
+        let mc = ModelConfig {
+            name: "local".into(),
+            backend: ModelBackend::Ollama,
+            context_size: 8192,
+            compact_mode: compact,
+            ..ModelConfig::default()
+        };
+        AgentLoopConfig {
+            model_configs: vec![mc],
+            active_model_name: Some("local".into()),
+            ..AgentLoopConfig::default()
+        }
+    }
+
+    #[test]
+    fn compact_mode_reads_active_model() {
+        assert!(cfg_with(true).compact_mode());
+        assert!(!cfg_with(false).compact_mode());
+    }
+
+    #[test]
+    fn compact_mode_false_when_no_active_model() {
+        let mut c = cfg_with(true);
+        c.active_model_name = None;
+        assert!(!c.compact_mode());
     }
 }
 

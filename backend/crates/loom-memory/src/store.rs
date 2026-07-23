@@ -527,6 +527,7 @@ impl<'a> ModelConfigStore<'a> {
                     output_price: row.get::<_, f64>(13).unwrap_or(0.0),
                     cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
                     cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
+                    compact_mode: false,
                 })
             })
             .ok();
@@ -568,6 +569,7 @@ impl<'a> ModelConfigStore<'a> {
                 output_price: row.get::<_, f64>(13).unwrap_or(0.0),
                 cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
                 cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
+                compact_mode: false,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -626,6 +628,7 @@ impl<'a> ModelConfigStore<'a> {
                     output_price: row.get::<_, f64>(13).unwrap_or(0.0),
                     cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
                     cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
+                    compact_mode: false,
                 })
             })
             .ok();
