@@ -5,7 +5,7 @@
 use anyhow::Result;
 use chrono::Utc;
 use loom_types::MemoryQualityReport;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 /// Compute the weighted health score (0-100) from the report's metrics.
@@ -1184,17 +1184,152 @@ impl<'a> GraphStore<'a> {
         }
     }
 
-    /// Promote specific nodes by name to global scope (no deletion of others).
-    /// Used for selective promotion from the UI.
-    pub fn promote_nodes_by_name(&self, names: &[String]) -> Result<usize> {
-        let mut count = 0;
-        for name in names {
-            count += self.conn.execute(
-                "UPDATE kg_nodes SET scope = 'global' WHERE name = ?1 AND scope != 'global'",
-                rusqlite::params![name],
-            )?;
+    pub fn promote_nodes_by_name_in_scope(&self, scope: &str, names: &[String]) -> Result<usize> {
+        let run_promote = || -> Result<usize> {
+            self.conn.execute_batch("BEGIN;")?;
+            let now = Utc::now().timestamp();
+            let mut promoted = 0;
+            let merge_node = |source_id: i64, target_id: i64| -> Result<()> {
+                self.conn.execute(
+                    "UPDATE kg_nodes
+                     SET confidence = MAX(confidence, (SELECT confidence FROM kg_nodes WHERE id = ?1)),
+                         evidence_count = evidence_count + (SELECT evidence_count FROM kg_nodes WHERE id = ?1),
+                         last_updated = ?2
+                     WHERE id = ?3",
+                    rusqlite::params![source_id, now, target_id],
+                )?;
+                self.conn.execute(
+                    "UPDATE kg_edges SET source_id = ?1 WHERE source_id = ?2",
+                    rusqlite::params![target_id, source_id],
+                )?;
+                self.conn.execute(
+                    "UPDATE kg_edges SET target_id = ?1 WHERE target_id = ?2",
+                    rusqlite::params![target_id, source_id],
+                )?;
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO kg_aliases (node_id, alias)
+                     SELECT ?1, alias FROM kg_aliases WHERE node_id = ?2",
+                    rusqlite::params![target_id, source_id],
+                )?;
+                self.conn.execute(
+                    "DELETE FROM kg_aliases WHERE node_id = ?1",
+                    rusqlite::params![source_id],
+                )?;
+                self.conn.execute(
+                    "UPDATE kg_evidence SET node_id = ?1 WHERE node_id = ?2",
+                    rusqlite::params![target_id, source_id],
+                )?;
+                self.conn.execute(
+                    "DELETE FROM kg_nodes WHERE id = ?1",
+                    rusqlite::params![source_id],
+                )?;
+                Ok(())
+            };
+
+            for name in names {
+                let source_id: Option<i64> = self
+                    .conn
+                    .query_row(
+                        "SELECT id FROM kg_nodes WHERE name = ?1 AND scope = ?2",
+                        rusqlite::params![name, scope],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let Some(source_id) = source_id else {
+                    continue;
+                };
+
+                let global_ids: Vec<i64> = {
+                    let mut stmt = self.conn.prepare(
+                        "SELECT id FROM kg_nodes
+                         WHERE name = ?1 AND scope = 'global'
+                         ORDER BY id",
+                    )?;
+                    stmt.query_map(rusqlite::params![name], |row| row.get(0))?
+                        .collect::<std::result::Result<Vec<_>, _>>()?
+                };
+                let global_id = global_ids.first().copied();
+
+                if let Some(global_id) = global_id {
+                    for duplicate_id in global_ids.into_iter().skip(1) {
+                        merge_node(duplicate_id, global_id)?;
+                    }
+                    merge_node(source_id, global_id)?;
+                } else {
+                    self.conn.execute(
+                        "UPDATE kg_nodes SET scope = 'global', last_updated = ?1 WHERE id = ?2",
+                        rusqlite::params![now, source_id],
+                    )?;
+                }
+                promoted += 1;
+            }
+
+            let promoted_edge_ids: Vec<i64> = {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id FROM kg_edges
+                     WHERE scope = ?1
+                       AND source_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')
+                       AND target_id IN (SELECT id FROM kg_nodes WHERE scope = 'global')",
+                )?;
+                stmt.query_map(rusqlite::params![scope], |row| row.get(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            for edge_id in &promoted_edge_ids {
+                self.conn.execute(
+                    "UPDATE kg_edges SET scope = 'global', last_updated = ?1 WHERE id = ?2",
+                    rusqlite::params![now, edge_id],
+                )?;
+            }
+            for edge_id in promoted_edge_ids {
+                let edge_key: Option<(i64, i64, String)> = self
+                    .conn
+                    .query_row(
+                        "SELECT source_id, target_id, relation_type FROM kg_edges WHERE id = ?1",
+                        rusqlite::params![edge_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?;
+                let Some((source_id, target_id, relation_type)) = edge_key else {
+                    continue;
+                };
+                let canonical_id: i64 = self.conn.query_row(
+                    "SELECT MIN(id) FROM kg_edges
+                     WHERE source_id = ?1 AND target_id = ?2
+                       AND relation_type = ?3 AND scope = 'global'",
+                    rusqlite::params![source_id, target_id, relation_type],
+                    |row| row.get(0),
+                )?;
+                if canonical_id == edge_id {
+                    continue;
+                }
+                self.conn.execute(
+                    "UPDATE kg_edges
+                     SET confidence = MAX(confidence, (SELECT confidence FROM kg_edges WHERE id = ?1)),
+                         evidence_count = evidence_count + (SELECT evidence_count FROM kg_edges WHERE id = ?1),
+                         last_updated = MAX(last_updated, (SELECT last_updated FROM kg_edges WHERE id = ?1))
+                     WHERE id = ?2",
+                    rusqlite::params![edge_id, canonical_id],
+                )?;
+                self.conn.execute(
+                    "UPDATE kg_evidence SET edge_id = ?1 WHERE edge_id = ?2",
+                    rusqlite::params![canonical_id, edge_id],
+                )?;
+                self.conn.execute(
+                    "DELETE FROM kg_edges WHERE id = ?1",
+                    rusqlite::params![edge_id],
+                )?;
+            }
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(promoted)
+        };
+
+        match run_promote() {
+            Ok(promoted) => Ok(promoted),
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(error)
+            }
         }
-        Ok(count)
     }
 
     /// Delete all nodes, edges, and evidence with a given scope.
@@ -2267,5 +2402,169 @@ mod tests {
         let store = GraphStore::new(&conn);
         let deleted = store.delete_node("no_such_entity").unwrap();
         assert!(!deleted, "deleting nonexistent node should return false");
+    }
+
+    #[test]
+    fn selective_promotion_promotes_edges_between_selected_nodes() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        let session = "session-1";
+        let alice = store
+            .upsert_node("Alice", "Person", "", 0.9, session, None)
+            .unwrap();
+        let rust = store
+            .upsert_node("Rust", "Technology", "", 0.9, session, None)
+            .unwrap();
+        store
+            .upsert_edge(alice, rust, "likes", "", 0.9, session)
+            .unwrap();
+
+        let promoted = store
+            .promote_nodes_by_name_in_scope(session, &["Alice".to_string(), "Rust".to_string()])
+            .unwrap();
+
+        assert_eq!(promoted, 2);
+        let edge_scope: String = conn
+            .query_row("SELECT scope FROM kg_edges", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(edge_scope, "global");
+    }
+
+    #[test]
+    fn selective_promotion_merges_an_existing_global_node() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        let session = "session-1";
+        let global_alice = store
+            .upsert_node("Alice", "Person", "global", 0.7, "global", None)
+            .unwrap();
+        let session_alice = store
+            .upsert_node("Alice", "Person", "session", 0.9, session, None)
+            .unwrap();
+        let rust = store
+            .upsert_node("Rust", "Technology", "", 0.9, session, None)
+            .unwrap();
+        store
+            .upsert_edge(session_alice, rust, "likes", "", 0.9, session)
+            .unwrap();
+
+        let promoted = store
+            .promote_nodes_by_name_in_scope(session, &["Alice".to_string(), "Rust".to_string()])
+            .unwrap();
+
+        assert_eq!(promoted, 2);
+        let alice_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes WHERE name = 'Alice' AND scope = 'global'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(alice_rows, 1);
+        let edge: (i64, String) = conn
+            .query_row(
+                "SELECT source_id, scope FROM kg_edges WHERE relation_type = 'likes'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(edge, (global_alice, "global".to_string()));
+    }
+
+    #[test]
+    fn selective_promotion_does_not_touch_same_name_in_another_session() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        store
+            .upsert_node("Alice", "Person", "", 0.9, "session-1", None)
+            .unwrap();
+        store
+            .upsert_node("Alice", "Person", "", 0.9, "session-2", None)
+            .unwrap();
+
+        let promoted = store
+            .promote_nodes_by_name_in_scope("session-1", &["Alice".to_string()])
+            .unwrap();
+
+        assert_eq!(promoted, 1);
+        let other_scope: String = conn
+            .query_row(
+                "SELECT scope FROM kg_nodes WHERE name = 'Alice' AND scope = 'session-2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(other_scope, "session-2");
+    }
+
+    #[test]
+    fn selective_promotion_repairs_preexisting_global_duplicates() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        store
+            .upsert_node("Alice", "Person", "", 0.7, "global", None)
+            .unwrap();
+        conn.execute(
+            "INSERT INTO kg_nodes
+             (name, entity_type, description, confidence, evidence_count,
+              first_seen, last_updated, scope, layer)
+             VALUES ('Alice', 'Person', '', 0.8, 1, 1, 1, 'global', 'semantic')",
+            [],
+        )
+        .unwrap();
+        store
+            .upsert_node("Alice", "Person", "", 0.9, "session-1", None)
+            .unwrap();
+
+        store
+            .promote_nodes_by_name_in_scope("session-1", &["Alice".to_string()])
+            .unwrap();
+
+        let global_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_nodes WHERE name = 'Alice' AND scope = 'global'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(global_rows, 1);
+    }
+
+    #[test]
+    fn selective_promotion_merges_duplicate_edges_after_node_merge() {
+        let conn = setup_db();
+        let store = GraphStore::new(&conn);
+        let global_alice = store
+            .upsert_node("Alice", "Person", "", 0.9, "global", None)
+            .unwrap();
+        let global_rust = store
+            .upsert_node("Rust", "Technology", "", 0.9, "global", None)
+            .unwrap();
+        store
+            .upsert_edge(global_alice, global_rust, "likes", "", 0.8, "global")
+            .unwrap();
+        let session_alice = store
+            .upsert_node("Alice", "Person", "", 0.9, "session-1", None)
+            .unwrap();
+        let session_rust = store
+            .upsert_node("Rust", "Technology", "", 0.9, "session-1", None)
+            .unwrap();
+        store
+            .upsert_edge(session_alice, session_rust, "likes", "", 0.9, "session-1")
+            .unwrap();
+
+        store
+            .promote_nodes_by_name_in_scope("session-1", &["Alice".to_string(), "Rust".to_string()])
+            .unwrap();
+
+        let edge_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kg_edges
+                 WHERE source_id = ?1 AND target_id = ?2 AND relation_type = 'likes'",
+                rusqlite::params![global_alice, global_rust],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(edge_rows, 1);
     }
 }

@@ -578,6 +578,7 @@ pub trait MemoryStore: Send + Sync {
     /// Promote specific entities and cognitions by name/id to global scope.
     async fn promote_selected(
         &self,
+        session_id: &str,
         node_names: &[String],
         cognition_ids: &[i64],
     ) -> Result<(usize, usize)>;
@@ -1971,7 +1972,9 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
     ) -> Result<(usize, usize)> {
         if let Some(ref store) = *self.memory_store.read().await {
             if !node_names.is_empty() || !cognition_ids.is_empty() {
-                store.promote_selected(node_names, cognition_ids).await
+                store
+                    .promote_selected(session_id, node_names, cognition_ids)
+                    .await
             } else {
                 store.promote_to_global(session_id, min_confidence).await
             }

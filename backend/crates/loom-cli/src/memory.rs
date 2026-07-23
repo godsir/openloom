@@ -1395,6 +1395,7 @@ impl MemoryStore for LoomMemoryStore {
 
     async fn promote_selected(
         &self,
+        session_id: &str,
         node_names: &[String],
         cognition_ids: &[i64],
     ) -> Result<(usize, usize)> {
@@ -1402,8 +1403,9 @@ impl MemoryStore for LoomMemoryStore {
         let conn = store.conn();
         let graph = GraphStore::new(conn);
         let cognition = CognitionStore::new(conn);
-        let promoted_nodes = graph.promote_nodes_by_name(node_names)?;
-        let promoted_cogs = cognition.promote_cognitions_by_id(cognition_ids)?;
+        let promoted_nodes = graph.promote_nodes_by_name_in_scope(session_id, node_names)?;
+        let promoted_cogs =
+            cognition.promote_cognitions_by_id_in_scope(session_id, cognition_ids)?;
         if promoted_nodes > 0 || promoted_cogs > 0 {
             tracing::info!(
                 promoted_nodes,

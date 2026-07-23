@@ -123,6 +123,8 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
       await loadSessionData(selectedSessionId)
       if (result.promoted_nodes > 0 || result.promoted_cognitions > 0) {
         const store = useStore.getState() as any
+        await store.kgListNodes?.()
+        store.kgClearGraph?.()
         store.addToast?.({
           type: 'success',
           message: t('kg.promote.promoteSuccess', { nodes: String(result.promoted_nodes), cognitions: String(result.promoted_cognitions) }),

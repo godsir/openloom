@@ -204,14 +204,12 @@ impl<'a> CognitionStore<'a> {
         Ok(promoted)
     }
 
-    /// Promote specific cognitions by ID to global scope (no deletion of others).
-    /// Used for selective promotion from the UI.
-    pub fn promote_cognitions_by_id(&self, ids: &[i64]) -> Result<usize> {
+    pub fn promote_cognitions_by_id_in_scope(&self, scope: &str, ids: &[i64]) -> Result<usize> {
         let mut count = 0;
         for id in ids {
             count += self.conn.execute(
-                "UPDATE cognitions SET scope = 'global' WHERE id = ?1 AND scope != 'global'",
-                params![id],
+                "UPDATE cognitions SET scope = 'global' WHERE id = ?1 AND scope = ?2",
+                params![id, scope],
             )?;
         }
         Ok(count)
@@ -865,8 +863,9 @@ pub fn set_default_workspace(path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use loom_types::ModelConfig;
+    use rusqlite::Connection;
 
-    use super::ModelConfigStore;
+    use super::{CognitionStore, ModelConfigStore};
     use crate::config_db::ConfigDb;
 
     #[test]
@@ -900,5 +899,43 @@ mod tests {
         let store = ModelConfigStore::new(db.conn());
         assert!(store.get("compact").unwrap().unwrap().compact_mode);
         assert!(store.get_active().unwrap().unwrap().compact_mode);
+    }
+
+    #[test]
+    fn selective_cognition_promotion_is_limited_to_the_session() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cognitions (
+                id INTEGER PRIMARY KEY,
+                subject TEXT NOT NULL,
+                trait TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                evidence_count INTEGER NOT NULL,
+                first_seen INTEGER NOT NULL,
+                last_updated INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                scope TEXT NOT NULL
+            );
+            INSERT INTO cognitions VALUES
+                (1, 'USER', 'name', 'Alice', 0.9, 1, 1, 1, 1, 'session-1'),
+                (2, 'USER', 'name', 'Bob', 0.9, 1, 1, 1, 1, 'session-2');",
+        )
+        .unwrap();
+        let store = CognitionStore::new(&conn);
+
+        let promoted = store
+            .promote_cognitions_by_id_in_scope("session-1", &[1, 2])
+            .unwrap();
+
+        assert_eq!(promoted, 1);
+        let scopes: Vec<String> = conn
+            .prepare("SELECT scope FROM cognitions ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(scopes, ["global", "session-2"]);
     }
 }
