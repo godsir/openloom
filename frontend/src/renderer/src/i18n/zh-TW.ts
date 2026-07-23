@@ -1318,6 +1318,7 @@ export const zhTW: TranslationMap = {
   'modelPanel.apiKeyEnv': 'API Key 環境變數',
   'modelPanel.maxOutputTokens': '最大輸出 Token',
   'modelPanel.contextSize': '上下文窗口',
+  'modelPanel.compactMode': '精簡模式（小視窗本地模型：不掛工具、精簡系統提示）',
   'modelPanel.modelName': '模型名稱',
   'modelPanel.apiKeyEnvVar': 'API Key 环境變數',
   'modelPanel.autoGenPlaceholder': '自动生成（无需填写）',

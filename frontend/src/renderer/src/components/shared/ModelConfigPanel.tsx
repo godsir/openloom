@@ -125,10 +125,11 @@ export default function ModelConfigPanel() {
   const [editForm, setEditForm] = useState<{
     name: string; model: string; backend: ModelBackend; base_url: string;
     context_size: number; max_output_tokens?: number
+    compact_mode: boolean
     backend_label?: string; api_format?: string; api_key_env?: string
     vision: boolean; reasoning: boolean; function_calling: boolean
     input_price?: number; output_price?: number; cache_read_price?: number; cache_write_price?: number
-  }>({ name: '', model: '', backend: 'DeepSeek', base_url: '', context_size: 4096, max_output_tokens: undefined, vision: false, reasoning: false, function_calling: false, input_price: undefined, output_price: undefined, cache_read_price: undefined, cache_write_price: undefined })
+  }>({ name: '', model: '', backend: 'DeepSeek', base_url: '', context_size: 4096, max_output_tokens: undefined, compact_mode: false, vision: false, reasoning: false, function_calling: false, input_price: undefined, output_price: undefined, cache_read_price: undefined, cache_write_price: undefined })
 
   const selected = providers.find(p => p.id === selectedId)
 
@@ -351,6 +352,7 @@ export default function ModelConfigPanel() {
       vision: m.capabilities?.vision ?? false,
       reasoning: m.capabilities?.reasoning ?? false,
       function_calling: m.capabilities?.function_calling ?? false,
+      compact_mode: m.compact_mode ?? false,
       input_price: m.input_price ?? undefined,
       output_price: m.output_price ?? undefined,
       cache_read_price: m.cache_read_price ?? undefined,
@@ -402,6 +404,7 @@ export default function ModelConfigPanel() {
         api_key_env: editForm.api_key_env || undefined,
         context_size: editForm.context_size,
         max_output_tokens: editForm.max_output_tokens,
+        compact_mode: editForm.compact_mode,
         capabilities: {
           vision: editForm.vision,
           reasoning: editForm.reasoning,
@@ -903,6 +906,16 @@ export default function ModelConfigPanel() {
                                     onChange={e => setEditForm(f => ({ ...f, max_output_tokens: parseInt(e.target.value) || undefined }))}
                                     className={styles.pvEditInput}
                                     placeholder={t('modelPanel.defaultPlaceholder')}
+                                  />
+                                </div>
+                              </div>
+                              <div className={styles.pvFieldRow}>
+                                <div className={styles.pvField}>
+                                  <label className={styles.pvEditLabel}>{t('modelPanel.compactMode')}</label>
+                                  <input
+                                    type="checkbox"
+                                    checked={editForm.compact_mode}
+                                    onChange={e => setEditForm(f => ({ ...f, compact_mode: e.target.checked }))}
                                   />
                                 </div>
                               </div>

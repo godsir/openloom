@@ -1323,6 +1323,7 @@ export const enUS: TranslationMap = {
   'modelPanel.apiKeyEnv': 'API Key Env Var',
   'modelPanel.maxOutputTokens': 'Max Output Tokens',
   'modelPanel.contextSize': 'Context Window',
+  'modelPanel.compactMode': 'Compact mode (small-window local models: no tools, slim prompt)',
   'modelPanel.modelName': 'Model Name',
   'modelPanel.apiKeyEnvVar': 'API Key Env Var',
   'modelPanel.autoGenPlaceholder': 'Auto-generated (no need to fill)',

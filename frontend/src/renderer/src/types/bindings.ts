@@ -30,6 +30,7 @@ export interface ModelConfig {
   api_format?: string
   context_size: number
   max_output_tokens?: number
+  compact_mode?: boolean
   is_active?: boolean
   capabilities?: ModelCapabilities
   input_price?: number
@@ -84,6 +85,7 @@ export interface ModelListItem {
   api_format?: string
   is_active: boolean
   context_size?: number
+  compact_mode?: boolean
   capabilities?: ModelCapabilities
   input_price?: number
   output_price?: number
