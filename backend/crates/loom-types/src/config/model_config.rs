@@ -74,6 +74,10 @@ pub struct ModelConfig {
     pub capabilities: ModelCapabilities,
     #[serde(default)]
     pub api_format: Option<String>,
+    /// 精简模式：勾选后主对话组装跳过 tools / dynamic_context / persona / todo 注入，
+    /// 只发精简 system + 历史 + 输入。配置驱动，不与 backend 绑定。默认 false。
+    #[serde(default)]
+    pub compact_mode: bool,
     /// USD per 1M input (prompt) tokens. 0 = not priced / local model.
     #[serde(default)]
     pub input_price: f64,
@@ -131,10 +135,29 @@ impl Default for ModelConfig {
             base_url: None,
             capabilities: ModelCapabilities::default(),
             api_format: None,
+            compact_mode: false,
             input_price: 0.0,
             output_price: 0.0,
             cache_read_price: 0.0,
             cache_write_price: 0.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_mode_defaults_false() {
+        assert!(!ModelConfig::default().compact_mode);
+    }
+
+    #[test]
+    fn compact_mode_back_compat_missing_field() {
+        // 旧配置（无 compact_mode 字段）反序列化必须得到 false
+        let json = r#"{"name":"x","backend":"Ollama","context_size":8192}"#;
+        let cfg: ModelConfig = serde_json::from_str(json).unwrap();
+        assert!(!cfg.compact_mode);
     }
 }
