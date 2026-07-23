@@ -4,6 +4,7 @@ import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import Select from '../shared/Select'
 import type { KgNode, Cognition } from '../../types/bindings'
+import { getPromotableEntities } from './promoteDialogData'
 import styles from './PromoteDialog.module.css'
 
 interface PromoteDialogProps {
@@ -66,7 +67,7 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
         loomRpc<{ nodes: KgNode[] }>('kg.list', { limit: 200, scope: sessionId }),
         loomRpc<{ rows: Cognition[] }>('cognitions.list', { subject: 'USER', scope: sessionId, limit: 200, offset: 0 }),
       ])
-      const ents = (entResult.nodes || []).filter(e => e.confidence >= threshold)
+      const ents = getPromotableEntities(entResult.nodes || [], sessionId, threshold)
       const cogs = (cogResult.rows || []).filter(c => c.confidence >= threshold)
       setEntities(ents)
       setCognitions(cogs)
@@ -191,7 +192,7 @@ export default function PromoteDialog({ open, onClose }: PromoteDialogProps) {
               ) : (
                 <div className={styles.list}>
                   {entities.map(e => (
-                    <label key={e.name} className={styles.item}>
+                    <label key={e.node_id} className={styles.item}>
                       <input
                         type="checkbox"
                         checked={checkedEntities.has(e.name)}
