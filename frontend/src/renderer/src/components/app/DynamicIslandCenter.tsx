@@ -2,7 +2,7 @@ import { useMemo, useEffect, useRef, useState } from 'react'
 import { useStore } from '../../stores'
 import { useIMStore, PLATFORM_LABELS, type Platform } from '../../stores/im'
 import type { StreamPhase } from '../../stores/streaming'
-import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown, IconUsers, IconX } from '../../utils/icons'
+import { IconMessageSquare, IconEdit, IconAlertCircle, IconDownload, IconSparkles, IconRotateCcw, IconBrain, IconEye, IconTerminal, IconCheck, IconChevronDown, IconUsers, IconX, IconArchive } from '../../utils/icons'
 import { useLocale } from '../../i18n'
 import PlatformIcon from '../shared/PlatformIcon'
 import { streamBufferManager } from '../../services/stream-buffer'
@@ -25,6 +25,7 @@ export default function DynamicIslandCenter() {
   const setIslandExpanded = useStore(s => s.setIslandExpanded)
   const imSessionSources = useIMStore(s => s.imSessionSources)
   const sessionTeamBindings = useStore(s => s.sessionTeamBindings)
+  const isCompacting = useStore(s => s.isCompacting)
 
   const isStreaming = streamingIds.size > 0
   const isDownloading = update.status === 'downloading'
@@ -34,10 +35,11 @@ export default function DynamicIslandCenter() {
   const isEngineStopped = engineState === 'stopped'
   const hasTransient = !!islandTransient
   const isSplit = isStreaming && isDownloading
-  const expandable = isStreaming || isDownloading || isDownloaded || isUpdateAvailable || isUpdateError || isEngineStopped
+  const expandable = isStreaming || isDownloading || isDownloaded || isUpdateAvailable || isUpdateError || isEngineStopped || isCompacting
 
   const activeState = useMemo(() => {
     if (hasTransient) return 'transient' as const
+    if (isCompacting) return 'compact' as const
     if (isEngineStopped) return 'crash' as const
     if (isSplit) return 'split' as const
     if (isDownloaded) return 'downloaded' as const
@@ -46,7 +48,7 @@ export default function DynamicIslandCenter() {
     if (isUpdateAvailable) return 'update' as const
     if (isStreaming) return 'streaming' as const
     return 'idle' as const
-  }, [hasTransient, isEngineStopped, isSplit, isDownloaded, isUpdateError, isDownloading, isUpdateAvailable, isStreaming])
+  }, [hasTransient, isCompacting, isEngineStopped, isSplit, isDownloaded, isUpdateError, isDownloading, isUpdateAvailable, isStreaming])
 
   const activeStreamId = (currentSessionId && streamingIds.has(currentSessionId))
     ? currentSessionId
@@ -82,6 +84,19 @@ export default function DynamicIslandCenter() {
       setStreamDuration(0)
     }
   }, [isStreaming])
+
+  // Compact duration — how long compaction has been running
+  const compactStartRef = useRef(Date.now())
+  const [compactDuration, setCompactDuration] = useState(0)
+  useEffect(() => {
+    if (isCompacting) {
+      compactStartRef.current = Date.now()
+      const iv = setInterval(() => setCompactDuration(Math.floor((Date.now() - compactStartRef.current) / 1000)), 1000)
+      return () => clearInterval(iv)
+    } else {
+      setCompactDuration(0)
+    }
+  }, [isCompacting])
 
   const pct = Math.round(update.progress)
 
@@ -313,6 +328,20 @@ export default function DynamicIslandCenter() {
             </button>
           </div>
         )}
+
+        {activeState === 'compact' && (
+          <div className={styles.expandedBody}>
+            <div className={styles.expandedHeader}>
+              <span className={styles.dynamicPulse} />
+              <IconArchive size={15} className={styles.dynamicIcon} />
+              <span className={styles.expandedTitle}>{t('island.compacting')}</span>
+            </div>
+            <div className={styles.expandedHint}>{t('island.compactingHint')}</div>
+            <div className={styles.expandedHint}>
+              <span>{Math.floor(compactDuration / 60)}:{(compactDuration % 60).toString().padStart(2, '0')}</span>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -364,6 +393,19 @@ export default function DynamicIslandCenter() {
             </div>
             <span className={styles.dynamicTitle}>{pct}%</span>
           </div>
+        </div>
+      </div>
+
+      {/* Compacting — /compact slash command */}
+      <div className={styles.dynamicLayer} data-active={activeState === 'compact' ? 'true' : 'false'}>
+        <div className={styles.layerRow}>
+          <span className={styles.dynamicPulse} />
+          <IconArchive size={13} className={styles.dynamicIcon} />
+          <span className={styles.dynamicTitle}>{t('island.compacting')}</span>
+          <span className={styles.dynamicNum}>{compactDuration}s</span>
+        </div>
+        <div className={styles.layerRow}>
+          <span className={styles.dynamicSub}>{t('island.compactingHint')}</span>
         </div>
       </div>
 

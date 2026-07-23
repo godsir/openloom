@@ -1,16 +1,21 @@
+/* ═══════════════════════════════════════════════════════
+   ModelConfigPanel — Polished Design
+   ═══════════════════════════════════════════════════════ */
+
 .pvLayout {
   display: flex;
-  min-height: 420px;
-  max-height: 62vh;
+  min-height: 460px;
+  max-height: 68vh;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   overflow: hidden;
+  background: var(--bg-card);
 }
 
-/* ── Left: provider list ── */
+/* ─── Left: Provider List ─── */
 
 .pvList {
-  width: 220px;
+  width: 200px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   display: flex;
@@ -19,23 +24,24 @@
   overflow-y: auto;
 }
 
+.pvList::-webkit-scrollbar { width: 4px; }
+.pvList::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
 .pvListItem {
   display: flex;
   align-items: center;
-  padding: 0 8px 0 12px;
+  padding: 0 6px 0 10px;
   border-left: 2px solid transparent;
   transition: all 0.12s ease;
 }
 
 .pvListItem:hover {
-  background: rgba(var(--accent-rgb), 0.03);
+  background: rgba(var(--accent-rgb), 0.04);
 }
 
 .pvListItemSelected {
   border-left-color: var(--accent);
   background: var(--accent-subtle);
-  color: var(--accent);
-  font-weight: 500;
 }
 
 .pvListItemBtn {
@@ -44,7 +50,7 @@
   gap: 8px;
   flex: 1;
   min-width: 0;
-  padding: 9px 0;
+  padding: 8px 0;
   font-size: 12px;
   color: inherit;
   cursor: pointer;
@@ -53,12 +59,18 @@
   text-align: left;
 }
 
-.pvListDelete {
+.pvListItemSelected .pvListItemBtn {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.pvListDelete,
+.pvListEdit {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--r-sm);
   border: none;
   background: none;
@@ -69,7 +81,8 @@
   flex-shrink: 0;
 }
 
-.pvListItem:hover .pvListDelete {
+.pvListItem:hover .pvListDelete,
+.pvListItem:hover .pvListEdit {
   opacity: 1;
 }
 
@@ -78,43 +91,24 @@
   background: var(--red-light);
 }
 
-.pvListEdit {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--r-sm);
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: all 0.12s ease;
-  flex-shrink: 0;
-}
-
-.pvListItem:hover .pvListEdit {
-  opacity: 1;
-}
-
 .pvListEdit:hover {
   color: var(--accent);
   background: rgba(var(--accent-rgb), 0.1);
 }
 
 .pvStatusDot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  opacity: 0.35;
   background: var(--text-muted);
+  opacity: 0.25;
 }
 
 .pvStatusDotOn {
   background: var(--green);
   opacity: 1;
+  box-shadow: 0 0 4px rgba(var(--green-rgb), 0.4);
 }
 
 .pvListName {
@@ -127,7 +121,11 @@
 
 .pvListCount {
   font-size: 10px;
+  font-weight: 500;
   color: var(--text-muted);
+  background: var(--bg-card);
+  padding: 1px 6px;
+  border-radius: var(--r-full);
   flex-shrink: 0;
 }
 
@@ -138,7 +136,7 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: 0.6;
   user-select: none;
 }
 
@@ -161,28 +159,104 @@
   color: var(--accent);
 }
 
-/* ── Right: provider detail ── */
+/* ─── Custom Provider Form ─── */
+
+.pvCustomForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.pvCustomInput {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.pvCustomInput:focus {
+  border-color: var(--accent);
+}
+
+.pvCustomActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.pvCustomBtn {
+  flex: 1;
+  height: 28px;
+  font-size: 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.pvCustomBtn:hover {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.pvCustomBtnPrimary {
+  flex: 1;
+  height: 28px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--r-sm);
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.pvCustomBtnPrimary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.pvCustomBtnPrimary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Right: Provider Detail ─── */
 
 .pvDetail {
   flex: 1;
   min-width: 0;
-  padding: 16px;
+  padding: 16px 18px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
 
+.pvDetail::-webkit-scrollbar { width: 4px; }
+.pvDetail::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
 .pvDetailHeader {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .pvDetailTitle {
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
+  margin: 0;
 }
 
 .pvEnvVarTag {
@@ -194,9 +268,10 @@
   font-family: var(--font-mono, 'Consolas', monospace);
   font-size: 10px;
   color: var(--text-secondary);
-  background: rgba(var(--accent-rgb), 0.05);
-  padding: 2px 6px;
+  background: rgba(var(--accent-rgb), 0.06);
+  padding: 2px 7px;
   border-radius: 3px;
+  border: 1px solid rgba(var(--accent-rgb), 0.1);
 }
 
 .pvEmpty {
@@ -208,37 +283,40 @@
   color: var(--text-muted);
 }
 
-/* ── Credentials card ── */
+/* ─── Credentials Card ─── */
 
 .pvCredCard {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 12px 14px;
   border-radius: var(--r-md);
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   flex-shrink: 0;
 }
 
 .pvCredRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .pvCredLabel {
   font-size: 10px;
+  font-weight: 500;
   color: var(--text-muted);
-  width: 56px;
+  width: 58px;
   flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .pvCredInput {
   flex: 1;
-  height: 28px;
-  padding: 0 8px;
+  height: 30px;
+  padding: 0 10px;
   font-size: 11px;
   color: var(--text);
   background: var(--bg-card);
@@ -247,6 +325,49 @@
   outline: none;
   transition: border-color 0.15s ease;
 }
+
+.pvCredInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.06);
+}
+
+.pvSaveBtn {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+
+.pvSaveBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pvSaveBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pvSaveOk {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-light);
+}
+
+.pvSaveFail {
+  border-color: var(--red);
+  color: var(--red);
+  background: var(--red-light);
+}
+
+/* ─── API Format Toggle ─── */
 
 .pvToggle {
   display: flex;
@@ -258,8 +379,8 @@
 }
 
 .pvToggleBtn {
-  height: 28px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 14px;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -271,7 +392,7 @@
 
 .pvToggleBtn:hover {
   color: var(--text);
-  background: rgba(var(--accent-rgb), 0.03);
+  background: rgba(var(--accent-rgb), 0.04);
 }
 
 .pvToggleActive {
@@ -279,71 +400,38 @@
   color: var(--accent);
 }
 
-.pvSaveBtn {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 500;
-  transition: all 0.12s ease;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.pvSaveBtn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.pvSaveBtn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.pvSaveOk {
-  color: var(--green);
-  border-color: var(--green);
-}
-
-.pvSaveFail {
-  color: var(--red);
-  border-color: var(--red);
-}
-
-/* ── Models section ── */
+/* ─── Models Section ─── */
 
 .pvModels {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .pvModelsBar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   flex-shrink: 0;
 }
 
-/* Search box */
 .pvSearchBox {
-  flex: 1;
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--r-sm);
-  background: var(--bg-card);
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--bg-surface);
   border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  transition: border-color 0.15s ease;
 }
 
 .pvSearchBox:focus-within {
-  border-color: var(--border-accent);
+  border-color: var(--accent);
 }
 
 .pvSearchIcon {
@@ -353,289 +441,373 @@
 
 .pvSearchInput {
   flex: 1;
-  min-width: 0;
-  background: transparent;
-  color: var(--text);
+  height: 100%;
   font-size: 11px;
+  color: var(--text);
+  background: none;
   border: none;
   outline: none;
 }
 
 .pvSearchInput::placeholder {
   color: var(--text-muted);
+  opacity: 0.7;
 }
 
 .pvSearchClear {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: none;
-  background: none;
+  background: var(--bg-active);
   color: var(--text-muted);
   cursor: pointer;
-  flex-shrink: 0;
-  padding: 0;
+  transition: all 0.12s ease;
 }
 
 .pvSearchClear:hover {
-  color: var(--text);
-  background: rgba(var(--accent-rgb), 0.08);
+  background: var(--red-light);
+  color: var(--red);
 }
 
 .pvFetchBtn {
-  height: 28px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 14px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--accent);
-  background: var(--accent-subtle);
-  border: 1px solid rgba(var(--accent-rgb), 0.20);
   border-radius: var(--r-sm);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  background: var(--accent-subtle);
+  color: var(--accent);
   cursor: pointer;
-  transition: all 0.12s ease;
-  flex-shrink: 0;
   white-space: nowrap;
+  transition: all 0.12s ease;
 }
 
 .pvFetchBtn:hover:not(:disabled) {
-  background: var(--accent-medium);
+  background: rgba(var(--accent-rgb), 0.14);
+  border-color: var(--accent);
 }
 
 .pvFetchBtn:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-/* Model section (configured / discovered) */
-.pvModelSection {
-  margin-bottom: 2px;
-}
+/* ─── Model Sections (Configured / Addable) ─── */
 
-.pvModelSection:last-child {
-  margin-bottom: 0;
+.pvModelSection {
+  margin-bottom: 14px;
 }
 
 .pvModelSectionHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 0 3px;
+  gap: 8px;
+  padding: 6px 0;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
-  user-select: none;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pvModelSectionCount {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  padding: 1px 7px;
+  border-radius: var(--r-full);
 }
 
 .pvModelFilterHint {
+  font-size: 10px;
   font-weight: 400;
+  color: var(--text-muted);
   text-transform: none;
-  opacity: 0.7;
+  letter-spacing: 0;
 }
 
 .pvModelList {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 4px;
 }
 
-.pvNoModels {
+.pvModelEmpty {
+  padding: 20px;
+  text-align: center;
   font-size: 11px;
   color: var(--text-muted);
-  padding: 16px 0;
-  text-align: center;
 }
 
-/* Configured model item */
-.pvModelItem {
+/* ─── Model Card (Configured) ─── */
+
+.pvModelCard {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: var(--r-sm);
-  transition: background 0.12s ease;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  transition: all 0.12s ease;
 }
 
-.pvModelItem:hover {
-  background: rgba(var(--accent-rgb), 0.02);
+.pvModelCard:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-card);
 }
 
-.pvModelItemActive {
+.pvModelCardActive {
+  border-color: var(--accent);
   background: var(--accent-subtle);
 }
 
-.pvModelMain {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+.pvModelCardInfo {
   flex: 1;
+  min-width: 0;
 }
 
-.pvModelName {
+.pvModelCardName {
   font-size: 12px;
+  font-weight: 500;
   color: var(--text);
-  min-width: 0;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: text;
-  padding: 1px 3px;
-  margin: -1px -3px;
-  border-radius: 3px;
-  transition: background 0.12s ease;
 }
 
-.pvModelName:hover {
-  background: rgba(var(--accent-rgb), 0.04);
+.pvModelCardActive .pvModelCardName {
+  color: var(--accent);
 }
+
+.pvModelCardMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.pvModelId {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, 'Consolas', monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.pvCtxBadge {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-active);
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+}
+
+.pvCapBadges {
+  display: flex;
+  gap: 3px;
+}
+
+.pvCapBadge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-sm);
+  background: rgba(var(--accent-rgb), 0.08);
+  color: var(--accent);
+}
+
+.pvModelCardActions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.pvModelCard:hover .pvModelCardActions {
+  opacity: 1;
+}
+
+.pvCardActionBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.pvCardActionBtn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.pvCardActionDanger:hover {
+  background: var(--red-light);
+  color: var(--red);
+}
+
+.pvActiveBadge {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pvActivateBtn {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  background: none;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.pvActivateBtn:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+
+/* ─── Inline Rename ─── */
 
 .pvRenameInput {
+  height: 26px;
+  padding: 0 8px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--text);
   background: var(--bg-card);
-  border: 1px solid var(--border-accent);
+  border: 1px solid var(--accent);
   border-radius: var(--r-sm);
-  padding: 1px 6px;
   outline: none;
-  min-width: 80px;
-  flex: 1;
+  width: 100%;
 }
 
-.pvModelCaps {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  color: var(--text-muted);
-  flex-shrink: 0;
+/* ─── Edit Panel (Inline) ─── */
+
+.pvEditPanel {
+  margin-top: 4px;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
 }
 
-.pvModelCtx {
-  font-size: 10px;
-  color: var(--text-muted);
-  background: var(--bg-active);
-  padding: 1px 5px;
-  border-radius: var(--r-sm);
-  flex-shrink: 0;
-  font-family: var(--font-mono, 'Consolas', monospace);
-}
-
-.pvModelActions {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.pvModelBtn {
-  font-size: 10px;
-  color: var(--accent);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 3px;
-}
-
-.pvModelBtn:hover {
-  background: rgba(var(--accent-rgb), 0.08);
-}
-
-.pvModelActiveBadge {
-  font-size: 10px;
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.pvModelBtnDanger {
-  composes: pvModelBtn;
-  color: var(--text-muted);
-}
-
-.pvModelBtnDanger:hover {
-  color: var(--red);
-  background: var(--red-light);
-}
-
-/* Discovered model (clickable to add) */
-.pvDiscoverItem {
+.pvEditHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-
-.pvDiscoverItem:hover {
+  padding: 10px 14px;
   background: var(--accent-subtle);
+  border-bottom: 1px solid var(--border);
 }
 
-.pvDiscoverMeta {
-  flex: 1;
+.pvEditTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.pvEditClose {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.pvDiscoverName {
-  font-size: 12px;
-  color: var(--text-secondary);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pvAddModelBtn {
-  font-size: 10px;
-  color: var(--accent);
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
-/* ── Inline edit form ── */
-
-.pvEditForm {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  margin: 2px 0;
-  border: 1px solid var(--border);
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border-radius: var(--r-sm);
-  background: var(--bg-surface);
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
 }
 
-.pvEditRow {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.pvEditClose:hover {
+  color: var(--text);
+  background: var(--bg-active);
 }
 
-.pvEditRowHalf {
+.pvEditSection {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pvEditSection:last-of-type {
+  border-bottom: none;
+}
+
+.pvEditSectionTitle {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.pvEditBody {
+  padding: 12px 14px;
+}
+
+.pvFieldRow {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.pvFieldRow:last-child {
+  margin-bottom: 0;
+}
+
+.pvField {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+
+.pvField:last-child {
+  margin-bottom: 0;
 }
 
 .pvEditLabel {
   font-size: 10px;
-  color: var(--text-muted);
   font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .pvEditInput {
   width: 100%;
-  height: 26px;
-  padding: 0 8px;
+  height: 32px;
+  padding: 0 10px;
   font-size: 11px;
   color: var(--text);
   background: var(--bg-card);
@@ -646,51 +818,143 @@
 }
 
 .pvEditInput:focus {
-  border-color: var(--border-accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.06);
 }
 
 .pvEditInput::placeholder {
   color: var(--text-muted);
+  opacity: 0.6;
 }
+
+/* ─── Capability Checkboxes ─── */
+
+.pvCapRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pvCapCheck {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.pvCapCheck:hover {
+  border-color: var(--border-accent);
+  background: var(--bg-surface);
+}
+
+.pvCapCheck input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.pvCapCheckActive {
+  border-color: rgba(var(--accent-rgb), 0.3);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* ─── Pricing Grid ─── */
+
+.pvPriceGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.pvPriceCell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pvPriceLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pvPriceInput {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-family: var(--font-mono, 'Consolas', monospace);
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.pvPriceInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.06);
+}
+
+.pvPriceInput::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+/* ─── Edit Panel Actions ─── */
 
 .pvEditActions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
-  margin-top: 2px;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
 }
 
 .pvEditCancelBtn {
-  height: 26px;
-  padding: 0 10px;
+  height: 32px;
+  padding: 0 16px;
   font-size: 11px;
   border-radius: var(--r-sm);
-  cursor: pointer;
   border: 1px solid var(--border);
   background: none;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  cursor: pointer;
   transition: all 0.12s ease;
 }
 
 .pvEditCancelBtn:hover {
+  border-color: var(--text-muted);
   color: var(--text);
 }
 
 .pvEditSaveBtn {
-  height: 26px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 18px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   border-radius: var(--r-sm);
+  border: none;
+  background: var(--accent);
+  color: #fff;
   cursor: pointer;
-  border: 1px solid rgba(var(--accent-rgb), 0.20);
-  background: var(--accent-subtle);
-  color: var(--accent);
   transition: all 0.12s ease;
 }
 
-.pvEditSaveBtn:hover {
-  background: var(--accent-medium);
+.pvEditSaveBtn:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
 .pvEditSaveBtn:disabled {
@@ -698,81 +962,66 @@
   cursor: not-allowed;
 }
 
-.pvCheckboxRow {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
+/* ─── Discovered Models ─── */
 
-.pvCheckboxLabel {
+.pvDiscoverItem {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--border);
+  background: transparent;
   cursor: pointer;
-}
-
-/* ── Custom provider form (left panel) ── */
-
-.pvCustomForm {
-  padding: 10px 12px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.pvCustomInput {
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  font-size: 11px;
-  color: var(--text);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  outline: none;
-}
-
-.pvCustomInput:focus {
-  border-color: var(--border-accent);
-}
-
-.pvCustomInput::placeholder {
-  color: var(--text-muted);
-}
-
-.pvCustomActions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.pvCustomBtn {
-  height: 26px;
-  padding: 0 10px;
-  font-size: 11px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  border: 1px solid var(--border);
-  background: none;
-  color: var(--text-muted);
   transition: all 0.12s ease;
 }
 
-.pvCustomBtn:hover {
-  color: var(--text);
+.pvDiscoverItem:hover {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-subtle);
 }
 
-.pvCustomBtnPrimary {
-  composes: pvCustomBtn;
+.pvDiscoverMeta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pvDiscoverName {
+  font-size: 11px;
+  font-family: var(--font-mono, 'Consolas', monospace);
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pvModelCtx {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+}
+
+.pvAddModelBtn {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  background: var(--accent-subtle);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+
+.pvDiscoverItem:hover .pvAddModelBtn {
   background: var(--accent);
   color: #fff;
-  border-color: transparent;
+  border-color: var(--accent);
 }
-
-.pvCustomBtnPrimary:hover:not(:disabled) {
-  opacity: 0.85;
-}
-

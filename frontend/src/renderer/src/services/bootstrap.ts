@@ -528,30 +528,23 @@ export async function bootstrapApp(): Promise<() => void> {
         // User steering added to queue — add to store item list
         const sid2 = (p?.session_id as string) || ''
         const item = p?.item as { id: string; text: string } | undefined
+        console.log('[steering.queued] received', { sid2, itemId: item?.id, textLength: item?.text?.length })
         if (sid2 && item) useStore.getState().addSteeringItem(sid2, item)
         break
       }
       case 'steering.consumed': {
-        // Backend consumed steering items — remove from queue, insert into chat
+        // 后端已把插话作为 [用户指引] System 消息注入当前 turn。这里只把它从
+        // 插话队列面板移除并更新计数——插话的归属是队列面板，不应再作为用户
+        // 消息塞进聊天区（否则看起来像"插话直接发到 message 区并清空队列"）。
         const sid2 = (p?.session_id as string) || ''
         const items = (p?.items as Array<{ id: string; text: string }>) || []
         const remaining = (p?.remaining_count as number) || 0
+        console.log('[steering.consumed] received', { sid2, itemCount: items.length, remaining, ids: items.map(it => it.id) })
         if (sid2 && items.length > 0) {
           const store = useStore.getState()
-          const ids = items.map(it => it.id)
-          store.removeSteeringItems(sid2, ids)
+          store.removeSteeringItems(sid2, items.map(it => it.id))
           store.setSteeringQueueCount(sid2, remaining)
-          // When items are consumed, insert them as user messages into chat
-          const plainEscapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          store.ensureSession(sid2)
-          for (const it of items) {
-            store.appendMessage(sid2, {
-              id: crypto.randomUUID(),
-              role: 'user',
-              blocks: [{ type: 'text', html: plainEscapeHtml(it.text), source: it.text, isSteering: true }],
-              timestamp: new Date().toISOString(),
-            })
-          }
+          console.log('[steering.consumed] removed from store', { sid2 })
         }
         break
       }
@@ -564,10 +557,17 @@ export async function bootstrapApp(): Promise<() => void> {
         // Backend finished entity extraction — refresh KG node list so the
         // star graph panel picks up new entities without manual reload.
         // Also clear the extracting state from the dynamic island.
-        useStore.getState().removeStreamingSession(sessionId)
+        // Only remove from streaming state if no active buffer exists
+        // (i.e., no new turn was auto-started by autoSendPendingSteering).
+        if (!streamBufferManager.hasBuffer(sessionId)) {
+          useStore.getState().removeStreamingSession(sessionId)
+        }
         import('../stores').then(({ useStore }) => {
           useStore.getState().kgListNodes()
         })
+        // After memory extraction finishes, trigger deferred auto-send if
+        // handleStreamEnd marked this session as having pending steering items.
+        streamBufferManager.triggerDeferredSteering(sessionId)
         break
       case 'preferences.changed': {
         const updates = (p?.updates ?? {}) as Record<string, unknown>
@@ -722,24 +722,15 @@ export async function bootstrapApp(): Promise<() => void> {
         break
       }
       case 'steering.consumed': {
+        // 同主 WS 处理：插话被后端注入当前 turn 后，只从队列面板移除，
+        // 不再往聊天区插入用户消息。
         const sid3 = (p?.session_id as string) || ''
         const items = (p?.items as Array<{ id: string; text: string }>) || []
         const remaining2 = (p?.remaining_count as number) || 0
         if (sid3 && items.length > 0) {
           const store = useStore.getState()
-          const ids = items.map(it => it.id)
-          store.removeSteeringItems(sid3, ids)
+          store.removeSteeringItems(sid3, items.map(it => it.id))
           store.setSteeringQueueCount(sid3, remaining2)
-          const plainEscapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          store.ensureSession(sid3)
-          for (const it of items) {
-            store.appendMessage(sid3, {
-              id: crypto.randomUUID(),
-              role: 'user',
-              blocks: [{ type: 'text', html: plainEscapeHtml(it.text), source: it.text, isSteering: true }],
-              timestamp: new Date().toISOString(),
-            })
-          }
         }
         break
       }
@@ -752,10 +743,17 @@ export async function bootstrapApp(): Promise<() => void> {
         // Backend finished entity extraction — refresh KG node list so the
         // star graph panel picks up new entities without manual reload.
         // Also clear the extracting state from the dynamic island.
-        useStore.getState().removeStreamingSession(sessionId)
+        // Only remove from streaming state if no active buffer exists
+        // (i.e., no new turn was auto-started by autoSendPendingSteering).
+        if (!streamBufferManager.hasBuffer(sessionId)) {
+          useStore.getState().removeStreamingSession(sessionId)
+        }
         import('../stores').then(({ useStore }) => {
           useStore.getState().kgListNodes()
         })
+        // After memory extraction finishes, trigger deferred auto-send if
+        // handleStreamEnd marked this session as having pending steering items.
+        streamBufferManager.triggerDeferredSteering(sessionId)
         break
       case 'preferences.changed': {
         const updates = p?.updates as Record<string, unknown> || {}

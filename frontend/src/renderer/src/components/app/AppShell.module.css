@@ -122,6 +122,11 @@
   border-color: rgba(var(--accent-rgb), 0.3);
 }
 
+.titlebarIsland[data-dynamic="compact"] {
+  border-color: rgba(var(--accent-rgb), 0.3);
+  animation: islandGlow 2.5s ease-in-out infinite;
+}
+
 .islandLeftBtn {
   position: absolute;
   left: 6px;
@@ -246,7 +251,8 @@
 
 /* streaming/download 状态标题：渐变流光 */
 .titlebarIsland[data-dynamic="streaming"] .dynamicTitle,
-.titlebarIsland[data-dynamic="download"] .dynamicTitle {
+.titlebarIsland[data-dynamic="download"] .dynamicTitle,
+.titlebarIsland[data-dynamic="compact"] .dynamicTitle {
   background: linear-gradient(
     90deg,
     var(--text) 0%,

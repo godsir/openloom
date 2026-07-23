@@ -85,6 +85,10 @@ class StreamBufferManager {
   *  Maps sessionId → generation number at time of cancellation. */
  private cancelledSessions = new Map<string, number>()
 
+  /** Sessions whose auto-send was deferred until memory extraction completes. */
+  private deferredSteeringSessions = new Set<string>()
+
+
   /** Register an existing assistant placeholder message for streaming updates.
    *  Resets any stale state from a previous stream on the same session. */
   startStream(sessionId: string, messageId: string, userSkills?: string[]): void {
@@ -114,6 +118,9 @@ class StreamBufferManager {
     buf.mdFenceHtml = ''
     if (buf.rafId) { cancelAnimationFrame(buf.rafId); buf.rafId = null }
     useStore.getState().setStreamingActivity(sessionId, { phase: 'generating' })
+    // steeringAtTurnStart snapshot removed: backend no longer drains steering items
+    // during a turn, so all queued items are pending and will be auto-sent as a
+    // new user message when the turn ends (autoSendPendingSteering).
   }
 
   /** Remove a message from the store by ID. */
@@ -503,6 +510,7 @@ class StreamBufferManager {
     // started, this stale event must be absorbed to prevent terminating
     // the new turn.
     const cancelledGen = this.cancelledSessions.get(sessionId)
+    const wasCancelled = cancelledGen !== undefined
     if (cancelledGen !== undefined) {
       const buf = this.buffers.get(sessionId)
       if (buf && buf.generation > cancelledGen) {
@@ -529,9 +537,10 @@ class StreamBufferManager {
       useStore.getState().setMessageUsage(sessionId, buf.messageId, { ...usage })
     }
    useStore.getState().removeStreamingSession(sessionId)
-   // 插话已通过 chat.steer 在 turn 进行中注入（agent_loop 迭代 drain 为
-   // [用户指引] System 消息，不打断当前生成）。未消费的项留在后端 queue，
-   // 下次 chat.send 时注入。stream_end 不再发新消息，避免与 chat.steer 重复注入。
+   // 插话在 turn 进行中由 agent_loop 迭代 drain 为 [用户指引] System 消息注入。
+   // 若回合结束时仍有插话滞留在队列（在最后一轮 drain 之后才加入），下方
+   // autoSendPendingSteering 会把它们按 FIFO 合并成一条 user 消息自动顺位发送，
+   // 而不是让它们永远停在队列里。
    // If this was an IM-originated stream, the user message (sent via IM) and
    // the final assistant response aren't in the renderer store — only the
    // streamed blocks are. Sync the full history from the engine so the
@@ -547,6 +556,82 @@ class StreamBufferManager {
 
     // Auto-title: trigger if session has no title and feature is enabled
     this.maybeAutoTitle(sessionId)
+
+    // 回合正常结束后，把仍滞留在插话队列里的项自动顺位发送（合并成一条 user
+    // 消息触发新 turn）。用户主动停止(wasCancelled)或 IM 会话不触发。
+    // 但需要等待 memory 提取完成后再发送，避免插话过早发出去。
+    console.log('[handleStreamEnd] steering check', { sessionId, wasCancelled, wasIM })
+    if (!wasCancelled && !wasIM) {
+      const pendingItems = useStore.getState().steeringQueueItems[sessionId] ?? []
+      if (pendingItems.length > 0) {
+        // Mark as deferred - will be sent by memory.updated handler or fallback timeout
+        this.deferredSteeringSessions.add(sessionId)
+        console.log('[handleStreamEnd] deferring autoSendPendingSteering', { sessionId, itemCount: pendingItems.length })
+        // Fallback: if memory extraction never happens (e.g., disabled), send after 3 seconds
+        setTimeout(() => {
+          if (this.deferredSteeringSessions.has(sessionId)) {
+            console.log('[handleStreamEnd] fallback timeout, triggering autoSendPendingSteering', { sessionId })
+            this.deferredSteeringSessions.delete(sessionId)
+            void this.autoSendPendingSteering(sessionId)
+          }
+        }, 3000)
+      }
+    } else {
+      console.log('[handleStreamEnd] skipping autoSendPendingSteering', { wasCancelled, wasIM })
+    }
+  }
+
+  /** 回合结束后，把仍滞留在插话队列里的项按 FIFO 顺序合并成一条 user 消息自动
+   *  发出（顺位发送），避免插话永远停在队列里。与 SteeringQueuePanel 的"立即截断
+   *  发送"同一套逻辑，但不需要 chat.stop（回合已自然结束）。发送前先清后端
+   *  steering queue 残留，否则新 turn 首轮迭代会把同样内容作为 [用户指引] 再注入
+   *  一次（重复）。 */
+  async autoSendPendingSteering(sessionId: string): Promise<void> {
+    // 顺位发送：只发送队列中的第一个插话，等待回复结束后再发送下一个
+    // Backend no longer drains steering items during a turn, so all queued
+    // items are pending and should be sent one by one after each turn ends.
+
+    const items = [...(useStore.getState().steeringQueueItems[sessionId] ?? [])]
+    if (items.length === 0) {
+      console.log('[autoSendPendingSteering] no items, returning')
+      return
+    }
+
+    // 只取第一个插话
+    const firstItem = items[0]
+    
+    // 从队列中移除第一个插话
+    useStore.getState().removeSteeringItems(sessionId, [firstItem.id])
+    console.log('[autoSendPendingSteering] start', { 
+      sessionId, 
+      totalItems: items.length, 
+      sending: firstItem.id,
+      remaining: items.length - 1 
+    })
+
+    // Clear backend steering queue so the next turn's agent loop doesn't
+    // pick up stale items.
+    try {
+      await loomRpc('chat.steer_clear', { session_id: sessionId })
+      console.log('[autoSendPendingSteering] steer_clear OK')
+    } catch (e) {
+      console.warn('[autoSendPendingSteering] steer_clear failed', e)
+    }
+
+    // 发送第一个插话作为新消息
+    console.log('[autoSendPendingSteering] sending first item', { 
+      itemId: firstItem.id,
+      textLength: firstItem.text.length 
+    })
+    try {
+      const { sendMessage } = await import('./sendMessage')
+      await sendMessage({ sessionId, content: firstItem.text })
+      console.log('[autoSendPendingSteering] sendMessage OK')
+    } catch (e) {
+      console.error('[autoSendPendingSteering] sendMessage failed', e)
+      // On failure, restore the first item back to the queue.
+      useStore.getState().addSteeringItem(sessionId, firstItem)
+    }
   }
 
   private async syncIMSessionHistory(sessionId: string): Promise<void> {
@@ -924,6 +1009,22 @@ class StreamBufferManager {
     if (buf?.rafId) cancelAnimationFrame(buf.rafId)
     this.buffers.delete(sessionId)
     this.cancelledSessions.delete(sessionId)
+  }
+
+  /** Check if a buffer exists for the session (used to prevent removing streaming
+   *  state when a new turn has been auto-started by autoSendPendingSteering). */
+  hasBuffer(sessionId: string): boolean {
+    return this.buffers.has(sessionId)
+  }
+
+  /** Trigger deferred auto-send if the session has pending steering items that were
+   *  waiting for memory extraction to complete. Called from memory.updated handler. */
+  triggerDeferredSteering(sessionId: string): void {
+    if (this.deferredSteeringSessions.has(sessionId)) {
+      console.log('[triggerDeferredSteering] memory extraction complete, triggering autoSend', { sessionId })
+      this.deferredSteeringSessions.delete(sessionId)
+      void this.autoSendPendingSteering(sessionId)
+    }
   }
 }
 

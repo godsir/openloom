@@ -78,6 +78,7 @@ export {
   Folder as IconFolderClosed,
   Bug as IconBug,
   Download as IconDownload,
+  Archive as IconArchive,
   // Write mode inline agent toolbar icons
   Bold as IconBold,
   Italic as IconItalic,
@@ -98,6 +99,7 @@ export {
   ClipboardCheck as IconClipboardCheck,
   QrCode as IconQrCode,
   Users as IconUsers,
+  GripVertical as IconGripVertical,
 } from 'lucide-react'
 export function IconStarFilled({ size = 16, className = '' }: { size?: number; className?: string }) {
   return <Star size={size} className={className} fill="currentColor" />

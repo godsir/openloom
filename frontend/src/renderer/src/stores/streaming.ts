@@ -31,6 +31,8 @@ export interface StreamingSlice {
   steeringQueueItems: Record<string, SteeringQueueItem[]>
   /** 插话面板是否被手动唤出（按钮切换）；新插话入队时也会自动置 true */
   steeringPanelOpen: boolean
+  /** /compact 操作进行中，灵动岛显示压缩状态 */
+  isCompacting: boolean
   addStreamingSession: (id: string) => void
   removeStreamingSession: (id: string) => void
   setStreamingActivity: (id: string, activity: StreamingActivity | null) => void
@@ -42,8 +44,11 @@ export interface StreamingSlice {
   addSteeringItem: (id: string, item: SteeringQueueItem) => void
   removeSteeringItems: (id: string, itemIds: string[]) => void
   clearSteeringItems: (id: string) => void
+  updateSteeringItem: (id: string, itemId: string, text: string) => void
+  reorderSteeringItems: (id: string, fromIndex: number, toIndex: number) => void
   toggleSteeringPanel: () => void
   openSteeringPanel: () => void
+  setCompacting: (val: boolean) => void
 }
 
 export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => ({
@@ -54,6 +59,7 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
   steeringQueueCounts: {},
   steeringQueueItems: {},
   steeringPanelOpen: false,
+  isCompacting: false,
 
   addStreamingSession: (id) => {
     const next = new Set(get().streamingSessionIds)
@@ -154,7 +160,22 @@ export const createStreamingSlice: StateCreator<StreamingSlice> = (set, get) => 
     set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: [] } })
     get().setSteeringQueueCount(id, 0)
   },
+  updateSteeringItem: (id, itemId, text) => {
+    const prev = get().steeringQueueItems[id] || []
+    const next = prev.map(it => it.id === itemId ? { ...it, text } : it)
+    set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: next } })
+  },
+  reorderSteeringItems: (id, fromIndex, toIndex) => {
+    const prev = get().steeringQueueItems[id] || []
+    if (fromIndex < 0 || fromIndex >= prev.length || toIndex < 0 || toIndex >= prev.length) return
+    const next = [...prev]
+    const [movedItem] = next.splice(fromIndex, 1)
+    next.splice(toIndex, 0, movedItem)
+    set({ steeringQueueItems: { ...get().steeringQueueItems, [id]: next } })
+  },
 
   toggleSteeringPanel: () => set((s) => ({ steeringPanelOpen: !s.steeringPanelOpen })),
   openSteeringPanel: () => set({ steeringPanelOpen: true }),
+
+  setCompacting: (val) => set({ isCompacting: val }),
 })

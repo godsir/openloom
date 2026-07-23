@@ -29,6 +29,7 @@ export interface ChatSlice {
   toggleReviewPanel: () => void
   deleteMessage: (sessionId: string, messageId: string) => void
   setMessageUsage: (sessionId: string, messageId: string, usage: { prompt: number; completion: number; model?: string; contextWindow?: number; cached?: number; cacheRead?: number; cacheWrite?: number }) => void
+  clearMessagesUsage: (sessionId: string) => void
   setMessageStopReason: (sessionId: string, messageId: string, stopReason: string | null) => void
   evictSession: (sessionId: string) => void
 }
@@ -139,6 +140,14 @@ export const createChatSlice: StateCreator<ChatSlice> = (set, get) => ({
     if (idx === -1) return
     msgs[idx] = { ...msgs[idx], usage }
     next.set(sessionId, msgs)
+    set({ messagesBySession: next })
+  },
+
+  clearMessagesUsage: (sessionId) => {
+    const next = new Map(get().messagesBySession)
+    const msgs = next.get(sessionId)
+    if (!msgs) return
+    next.set(sessionId, msgs.map((m) => m.usage ? { ...m, usage: undefined } : m))
     set({ messagesBySession: next })
   },
 

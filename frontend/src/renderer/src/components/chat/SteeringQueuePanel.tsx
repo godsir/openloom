@@ -1,50 +1,143 @@
-import { useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useStore } from '../../stores'
-import { useLocale } from '../../i18n'
-import { loomRpc } from '../../services/jsonrpc'
 import { streamBufferManager } from '../../services/stream-buffer'
-import { IconX } from '../../utils/icons'
+import { loomRpc } from '../../services/jsonrpc'
+import { sendMessage } from '../../services/sendMessage'
+import {
+  IconSend,
+  IconTrash,
+  IconEdit,
+  IconX,
+  IconChevronRight,
+  IconChevronDown,
+  IconGripVertical,
+} from '../../utils/icons'
+import { useLocale } from '../../i18n'
 import styles from './SteeringQueuePanel.module.css'
+
+const EMPTY_STEERING: never[] = []
 
 interface Props {
   sessionId: string
 }
 
-const EMPTY_ITEMS: any[] = []
-
 export default function SteeringQueuePanel({ sessionId }: Props) {
   const { t } = useLocale()
-  const items = useStore(s => s.steeringQueueItems[sessionId] ?? EMPTY_ITEMS)
-  const streamingActive = useStore(s => s.streamingSessionIds.has(sessionId))
-  // 面板可见条件：被按钮手动唤出，或有待处理插话（自动唤出）
-  const panelOpen = useStore(s => s.steeringPanelOpen)
+  const items = useStore((s) => s.steeringQueueItems[sessionId] ?? EMPTY_STEERING)
+  const streamingActive = useStore((s) => s.streamingSessionIds.has(sessionId))
+  const panelOpen = useStore((s) => s.steeringPanelOpen)
 
-  const handleForceSend = useCallback(async (itemId: string, text: string) => {
-    if (!sessionId) return
-    // Mark current generation as cancelled so the stale StreamEnd from the
-    // killed turn is absorbed instead of terminating the replacement turn.
-    streamBufferManager.markCancelled(sessionId)
-    try { await loomRpc('chat.stop', { session_id: sessionId }) } catch { /* ignore */ }
-    // 清后端 steering queue 残留：这些项已由 chat.steer 推入后端但尚未被消费，
-    // 若不清，下方新 chat.send 会在首轮迭代作为 [用户指引] 重复注入，与 combined
-    // 的 user 消息内容重叠。forceSend 的语义是把插话变成正式 user 消息触发新 turn，
-    // 故后端 pending 残留必须一并清掉。
-    try { await loomRpc('chat.steer_clear', { session_id: sessionId }) } catch { /* ignore */ }
-    // Collect remaining items + this one, clear queue, send combined
-    const items = useStore.getState().steeringQueueItems[sessionId] || []
-    const remaining = items.filter(it => it.id !== itemId).map(it => it.text)
-    useStore.getState().clearSteeringItems(sessionId)
-    useStore.getState().removeStreamingSession(sessionId)
-    streamBufferManager.clear(sessionId)
-    // Combine into one user message — avoids dual-send race with drainSteeringQueue
-    const allTexts = [...remaining, text]
-    const combined = allTexts.join('\n')
-    const { sendMessage } = await import('../../services/sendMessage')
-    await sendMessage({ sessionId, content: combined })
-  }, [sessionId])
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
-  const handleRemoveOne = useCallback((itemId: string) => {
-    useStore.getState().removeSteeringItems(sessionId, [itemId])
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const startEdit = (id: string, text: string) => {
+    setEditingId(id)
+    setEditText(text)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditText('')
+  }
+
+  const saveEdit = (id: string) => {
+    if (editText.trim()) {
+      useStore.getState().updateSteeringItem(sessionId, id, editText.trim())
+    }
+    cancelEdit()
+  }
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDragIndex(index)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverIndex(index)
+  }
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null)
+  }
+
+  const handleDrop = (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault()
+    if (dragIndex !== null && dragIndex !== toIndex) {
+      useStore.getState().reorderSteeringItems(sessionId, dragIndex, toIndex)
+    }
+    setDragIndex(null)
+    setDragOverIndex(null)
+  }
+
+  const handleDragEnd = () => {
+    setDragIndex(null)
+    setDragOverIndex(null)
+  }
+
+  const handleSendOne = useCallback(async (text: string) => {
+    if (streamingActive) {
+      streamBufferManager.markCancelled(sessionId)
+      try {
+        await loomRpc('chat.stop', { session_id: sessionId })
+      } catch {}
+    }
+
+    try {
+      await loomRpc('chat.steer_clear', { session_id: sessionId })
+    } catch {}
+
+    if (streamingActive) {
+      useStore.getState().removeStreamingSession(sessionId)
+      streamBufferManager.clear(sessionId)
+    }
+
+    await sendMessage(sessionId, text)
+  }, [sessionId, streamingActive])
+
+  const handleSendAll = useCallback(async () => {
+    if (items.length === 0) return
+    const firstItem = items[0]
+
+    if (streamingActive) {
+      streamBufferManager.markCancelled(sessionId)
+      try {
+        await loomRpc('chat.stop', { session_id: sessionId })
+      } catch {}
+    }
+
+    try {
+      await loomRpc('chat.steer_clear', { session_id: sessionId })
+    } catch {}
+
+    useStore.getState().removeSteeringItems(sessionId, [firstItem.id])
+
+    if (streamingActive) {
+      useStore.getState().removeStreamingSession(sessionId)
+      streamBufferManager.clear(sessionId)
+    }
+
+    await sendMessage(sessionId, firstItem.text)
+  }, [sessionId, items, streamingActive])
+
+  const handleRemoveOne = useCallback((id: string) => {
+    useStore.getState().removeSteeringItems(sessionId, [id])
   }, [sessionId])
 
   const handleClearAll = useCallback(() => {
@@ -57,36 +150,120 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
-        <span>{t('chat.steeringQueueTitle')} <span className={styles.count}>({items.length})</span></span>
-        <button className={styles.clearBtn} onClick={handleClearAll}>
-          <IconX size={13} />
-        </button>
+        <div className={styles.headerLeft}>
+          <span className={styles.title}>{t('chat.steeringQueueTitle')}</span>
+          <span className={styles.badge}>{items.length}</span>
+        </div>
+        <div className={styles.headerActions}>
+          {items.length > 1 && (
+            <button className={styles.sendAllBtn} onClick={handleSendAll}>
+              <IconSend size={14} />
+              {t('chat.steeringSendAll')}
+            </button>
+          )}
+          <button className={styles.clearBtn} onClick={handleClearAll} title={t('chat.steeringClearAll')}>
+            <IconTrash size={14} />
+          </button>
+        </div>
       </div>
+
       <div className={styles.list}>
         {items.length === 0 ? (
           <div className={styles.empty}>{t('chat.steeringQueueEmpty')}</div>
         ) : (
-          items.map((item, i) => (
-          <div key={item.id} className={styles.item}>
-            <span className={styles.index}>{i + 1}.</span>
-            <span className={styles.text}>{item.text}</span>
-            <div className={styles.actions}>
-              {streamingActive && (
-                <button
-                  className={styles.forceBtn}
-                  onClick={() => handleForceSend(item.id, item.text)}
-                >
-                  {t('chat.steeringForceSend')}
-                </button>
-              )}
-              <button className={styles.removeBtn} onClick={() => handleRemoveOne(item.id)}>
-                <IconX size={10} />
-              </button>
-            </div>
-          </div>
-          ))
+          items.map((item, i) => {
+            const isExpanded = expandedIds.has(item.id)
+            const isEditing = editingId === item.id
+            const isDragging = dragIndex === i
+            const isDragOver = dragOverIndex === i
+            const preview = item.text.length > 60 ? item.text.slice(0, 60) + '...' : item.text
+
+            return (
+              <div
+                key={item.id}
+                className={`${styles.item} ${isDragging ? styles.dragging : ''} ${isDragOver ? styles.dragOver : ''}`}
+                draggable={!isEditing}
+                onDragStart={(e) => handleDragStart(e, i)}
+                onDragOver={(e) => handleDragOver(e, i)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, i)}
+                onDragEnd={handleDragEnd}
+              >
+                <div className={styles.itemHeader} onClick={() => !isEditing && toggleExpand(item.id)}>
+                  {!isEditing && (
+                    <button className={styles.dragHandle}>
+                      <IconGripVertical size={14} />
+                    </button>
+                  )}
+                  <span className={styles.index}>{i + 1}</span>
+                  {isEditing ? (
+                    <div className={styles.editContainer}>
+                      <input
+                        className={styles.editInput}
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEdit(item.id)
+                          if (e.key === 'Escape') cancelEdit()
+                        }}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button className={styles.editSaveBtn} onClick={() => saveEdit(item.id)}>
+                        <IconEdit size={12} />
+                      </button>
+                      <button className={styles.editCancelBtn} onClick={cancelEdit}>
+                        <IconX size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className={styles.previewText}>
+                      {isExpanded ? item.text : preview}
+                    </span>
+                  )}
+                  {!isEditing && (
+                    isExpanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />
+                  )}
+                </div>
+
+                <div className={styles.actions}>
+                  <button
+                    className={styles.sendBtn}
+                    onClick={() => handleSendOne(item.text)}
+                    title={t('chat.steeringSendOne')}
+                  >
+                    <IconSend size={14} />
+                  </button>
+                  {!isEditing && (
+                    <button
+                      className={styles.editBtn}
+                      onClick={() => startEdit(item.id, item.text)}
+                      title={t('common.edit')}
+                    >
+                      <IconEdit size={14} />
+                    </button>
+                  )}
+                  <button
+                    className={styles.removeBtn}
+                    onClick={() => handleRemoveOne(item.id)}
+                    title={t('common.delete')}
+                  >
+                    <IconX size={14} />
+                  </button>
+                </div>
+              </div>
+            )
+          })
         )}
       </div>
+
+      {items.length > 0 && (
+        <div className={styles.footer}>
+          <div className={styles.hint}>
+            {streamingActive ? t('chat.steeringStreamingHint') : t('chat.steeringQueuedHint')}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

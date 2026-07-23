@@ -599,10 +599,10 @@ export default function ModelConfigPanel() {
           return (
             <div
               key={p.id}
-              className={`${styles.pvListItem} ${selectedId === p.id ? styles.pvListItemSelected : ''}`}
+              className={styles.pvListItem + ' ' + (selectedId === p.id ? styles.pvListItemSelected : '')}
             >
               <button onClick={() => handleSelect(p)} className={styles.pvListItemBtn}>
-                <span className={`${styles.pvStatusDot} ${hasKey ? styles.pvStatusDotOn : ''}`} />
+                <span className={styles.pvStatusDot + ' ' + (hasKey ? styles.pvStatusDotOn : '')} />
                 <span className={styles.pvListName}>{p.label}</span>
                 {count > 0 && <span className={styles.pvListCount}>{count}</span>}
               </button>
@@ -619,10 +619,10 @@ export default function ModelConfigPanel() {
               return (
                 <div
                   key={p.id}
-                  className={`${styles.pvListItem} ${selectedId === p.id ? styles.pvListItemSelected : ''}`}
+                  className={styles.pvListItem + ' ' + (selectedId === p.id ? styles.pvListItemSelected : '')}
                 >
                   <button onClick={() => handleSelect(p)} className={styles.pvListItemBtn}>
-                    <span className={`${styles.pvStatusDot} ${hasKey ? styles.pvStatusDotOn : ''}`} />
+                    <span className={styles.pvStatusDot + ' ' + (hasKey ? styles.pvStatusDotOn : '')} />
                     <span className={styles.pvListName}>{p.label}</span>
                     {count > 0 && <span className={styles.pvListCount}>{count}</span>}
                   </button>
@@ -714,9 +714,9 @@ export default function ModelConfigPanel() {
                 <button
                   onClick={handleSaveKey}
                   disabled={!apiKey.trim()}
-                  className={`${styles.pvSaveBtn} ${verifyStatus === 'ok' ? styles.pvSaveOk : ''} ${verifyStatus === 'fail' ? styles.pvSaveFail : ''}`}
+                  className={styles.pvSaveBtn + ' ' + (verifyStatus === 'ok' ? styles.pvSaveOk : '') + ' ' + (verifyStatus === 'fail' ? styles.pvSaveFail : '')}
                 >
-                  {verifyStatus === 'testing' ? '…' : verifyStatus === 'ok' ? t('modelPanel.apiKeySavedBtn') : verifyStatus === 'fail' ? t('modelPanel.apiKeyFailedBtn') : t('common.save')}
+                  {verifyStatus === 'testing' ? '...' : verifyStatus === 'ok' ? t('modelPanel.apiKeySavedBtn') : verifyStatus === 'fail' ? t('modelPanel.apiKeyFailedBtn') : t('common.save')}
                 </button>
               </div>
               <div className={styles.pvCredRow}>
@@ -731,7 +731,7 @@ export default function ModelConfigPanel() {
                 <button
                   onClick={handleSaveUrl}
                   disabled={!baseUrl.trim() || urlSaveStatus === 'saving'}
-                  className={`${styles.pvSaveBtn} ${urlSaveStatus === 'ok' ? styles.pvSaveOk : ''} ${urlSaveStatus === 'fail' ? styles.pvSaveFail : ''}`}
+                  className={styles.pvSaveBtn + ' ' + (urlSaveStatus === 'ok' ? styles.pvSaveOk : '') + ' ' + (urlSaveStatus === 'fail' ? styles.pvSaveFail : '')}
                 >
                   {urlSaveStatus === 'saving' ? '...' : urlSaveStatus === 'ok' ? t('modelPanel.baseUrlSavedBtn') : urlSaveStatus === 'fail' ? t('modelPanel.baseUrlFailedBtn') : t('common.save')}
                 </button>
@@ -740,13 +740,13 @@ export default function ModelConfigPanel() {
                 <span className={styles.pvCredLabel}>{t('modelPanel.apiFormat')}</span>
                 <div className={styles.pvToggle}>
                   <button
-                    className={`${styles.pvToggleBtn} ${apiFormat === 'openai' ? styles.pvToggleActive : ''}`}
+                    className={styles.pvToggleBtn + ' ' + (apiFormat === 'openai' ? styles.pvToggleActive : '')}
                     onClick={() => { setApiFormat('openai'); setUrlSaveStatus('idle'); setBaseUrl(u => normalizeBaseUrl(u, 'openai')) }}
                   >
                     OpenAI
                   </button>
                   <button
-                    className={`${styles.pvToggleBtn} ${apiFormat === 'anthropic' ? styles.pvToggleActive : ''}`}
+                    className={styles.pvToggleBtn + ' ' + (apiFormat === 'anthropic' ? styles.pvToggleActive : '')}
                     onClick={() => { setApiFormat('anthropic'); setUrlSaveStatus('idle'); setBaseUrl(u => normalizeBaseUrl(u, 'anthropic')) }}
                   >
                     Anthropic
@@ -775,188 +775,223 @@ export default function ModelConfigPanel() {
                 </div>
                 <button
                   onClick={handleFetchModels}
-                  disabled={discovering || !baseUrl.trim()}
+                  disabled={discovering}
                   className={styles.pvFetchBtn}
                 >
                   {discovering ? t('modelPanel.fetching') : t('modelPanel.fetchModels')}
                 </button>
               </div>
 
-              {/* Empty state */}
-              {filteredConfigured.length === 0 && filteredDiscovered.length === 0 && (
-                <p className={styles.pvNoModels}>
-                  {q ? t('modelPanel.noMatching') : t('modelPanel.noModels')}
-                </p>
-              )}
-
               {/* Configured models */}
-              {filteredConfigured.length > 0 && (
+              {filteredConfigured.length > 0 ? (
                 <div className={styles.pvModelSection}>
                   <div className={styles.pvModelSectionHeader}>
-                    <span>{t('modelPanel.configured')} ({filteredConfigured.length}){q && <span className={styles.pvModelFilterHint}>{t('modelPanel.filterHint', { n: providerModels.length })}</span>}</span>
+                    {t('modelPanel.configured')}
+                    <span className={styles.pvModelSectionCount}>{filteredConfigured.length}</span>
+                    {q && <span className={styles.pvModelFilterHint}>{t('modelPanel.filterHint', { n: providerModels.length })}</span>}
                   </div>
                   <div className={styles.pvModelList}>
                     {filteredConfigured.map(m => (
                       <div key={m.name}>
-                        <div className={`${styles.pvModelItem} ${m.is_active ? styles.pvModelItemActive : ''}`}>
-                          <div className={styles.pvModelMain}>
+                        <div className={styles.pvModelCard + ' ' + (m.is_active ? styles.pvModelCardActive : '')}>
+                          <div className={styles.pvModelCardInfo}>
                             {renamingModel === m.name ? (
                               <input
-                                className={styles.pvRenameInput}
+                                autoFocus
                                 value={renameDraft}
                                 onChange={e => setRenameDraft(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter') submitRename(m); if (e.key === 'Escape') setRenamingModel(null) }}
                                 onBlur={() => submitRename(m)}
-                                onClick={e => e.stopPropagation()}
-                                autoFocus
+                                onKeyDown={e => { if (e.key === 'Enter') submitRename(m); if (e.key === 'Escape') setRenamingModel(null) }}
+                                className={styles.pvRenameInput}
                               />
                             ) : (
                               <span
-                                className={styles.pvModelName}
-                                onClick={e => { e.stopPropagation(); startRename(m) }}
+                                className={styles.pvModelCardName}
                                 title={t('modelPanel.clickToRename')}
+                                onDoubleClick={() => startRename(m)}
                               >
                                 {m.name}
                               </span>
                             )}
-                            {m.context_size ? <span className={styles.pvModelCtx}>{formatContext(m.context_size)}</span> : null}
-                            <div className={styles.pvModelCaps}>
-                              {m.capabilities?.vision && <span title={t('modelPanel.vision')}><IconEye size={11} /></span>}
-                              {m.capabilities?.reasoning && <span title={t('modelPanel.reasoning')}><IconBrain size={11} /></span>}
-                              {m.capabilities?.function_calling && <span title={t('modelPanel.toolCalling')}><IconWrench size={11} /></span>}
+                            <div className={styles.pvModelCardMeta}>
+                              {m.model && <span className={styles.pvModelId} title={m.model}>{m.model}</span>}
+                              {(m.context_size ?? 0) > 0 && (
+                                <span className={styles.pvCtxBadge}>{formatContext(m.context_size!)}</span>
+                              )}
+                              <div className={styles.pvCapBadges}>
+                                {m.capabilities?.vision && (
+                                  <span className={styles.pvCapBadge} title={t('modelPanel.vision')}><IconEye size={11} /></span>
+                                )}
+                                {m.capabilities?.reasoning && (
+                                  <span className={styles.pvCapBadge} title={t('modelPanel.reasoning')}><IconBrain size={11} /></span>
+                                )}
+                                {m.capabilities?.function_calling && (
+                                  <span className={styles.pvCapBadge} title={t('modelPanel.toolCalling')}><IconWrench size={11} /></span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <div className={styles.pvModelActions}>
-                            <button onClick={() => handleStartEdit(m)} className={styles.pvModelBtn}>{t('common.edit')}</button>
-                            {!m.is_active && <button onClick={() => handleSetActive(m.name)} className={styles.pvModelBtn}>{t('modelPanel.activate')}</button>}
-                            {m.is_active && <span className={styles.pvModelActiveBadge}>{t('modelPanel.current')}</span>}
-                            <button onClick={() => handleDeleteModel(m.name)} className={styles.pvModelBtnDanger}>{t('common.delete')}</button>
+                          <div className={styles.pvModelCardActions}>
+                            {m.is_active ? (
+                              <span className={styles.pvActiveBadge}>{t('modelPanel.current')}</span>
+                            ) : (
+                              <button onClick={() => handleSetActive(m.name)} className={styles.pvActivateBtn}>{t('modelPanel.activate')}</button>
+                            )}
+                            <button onClick={() => handleStartEdit(m)} className={styles.pvCardActionBtn} title={t('common.edit')}>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                              </svg>
+                            </button>
+                            <button onClick={() => handleDeleteModel(m.name)} className={styles.pvCardActionBtn + ' ' + styles.pvCardActionDanger} title={t('common.delete')}>
+                              <IconX size={12} />
+                            </button>
                           </div>
                         </div>
+
+                        {/* Edit panel */}
                         {editingModel === m.name && (
-                          <div className={styles.pvEditForm}>
-                            <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.displayName')}</label>
-                              <input
-                                className={styles.pvEditInput}
-                                value={editForm.name}
-                                onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
-                                placeholder={t('modelPanel.displayName')}
-                              />
+                          <div className={styles.pvEditPanel}>
+                            <div className={styles.pvEditHeader}>
+                              <span className={styles.pvEditTitle}>{t('modelPanel.editModelTitle')}</span>
+                              <button onClick={handleCancelEdit} className={styles.pvEditClose}>
+                                <IconX size={12} />
+                              </button>
                             </div>
-                            <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.modelId')}</label>
-                              <input
-                                className={styles.pvEditInput}
-                                value={editForm.model}
-                                onChange={e => setEditForm(f => ({ ...f, model: e.target.value }))}
-                                placeholder="e.g. deepseek-v4-flash"
-                              />
-                            </div>
-                            <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.baseUrl')}</label>
-                              <input
-                                className={styles.pvEditInput}
-                                value={editForm.base_url}
-                                onChange={e => setEditForm(f => ({ ...f, base_url: e.target.value }))}
-                                placeholder="https://api.example.com/v1"
-                              />
-                            </div>
-                            <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.apiKeyEnvVar')}</label>
-                              <input
-                                className={styles.pvEditInput}
-                                value={editForm.api_key_env || ''}
-                                onChange={e => setEditForm(f => ({ ...f, api_key_env: e.target.value }))}
-                                placeholder={selected?.isCustom ? t('modelPanel.customEnvPlaceholder') : t('modelPanel.autoGenPlaceholder')}
-                              />
-                            </div>
-                            <div className={styles.pvEditRowHalf}>
-                              <div className={styles.pvEditRow}>
-                                <label className={styles.pvEditLabel}>{t('modelPanel.contextWindow')}</label>
+
+                            <div className={styles.pvEditSection}>
+                              <div className={styles.pvEditSectionTitle}>{t('modelPanel.sectionBasic')}</div>
+                              <div className={styles.pvFieldRow}>
+                                <div className={styles.pvField}>
+                                  <label className={styles.pvEditLabel}>{t('modelPanel.modelName')}</label>
+                                  <input
+                                    value={editForm.name}
+                                    onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                                    className={styles.pvEditInput}
+                                    placeholder={t('modelPanel.displayName')}
+                                  />
+                                </div>
+                                <div className={styles.pvField}>
+                                  <label className={styles.pvEditLabel}>{t('modelPanel.modelId')}</label>
+                                  <input
+                                    value={editForm.model}
+                                    onChange={e => setEditForm(f => ({ ...f, model: e.target.value }))}
+                                    className={styles.pvEditInput}
+                                    placeholder="deepseek-chat"
+                                  />
+                                </div>
+                              </div>
+                              <div className={styles.pvFieldRow}>
+                                <div className={styles.pvField}>
+                                  <label className={styles.pvEditLabel}>{t('modelPanel.contextSize')}</label>
+                                  <input
+                                    type="number"
+                                    min="1024"
+                                    step="1024"
+                                    value={editForm.context_size || ''}
+                                    onChange={e => setEditForm(f => ({ ...f, context_size: parseInt(e.target.value) || 4096 }))}
+                                    className={styles.pvEditInput}
+                                    placeholder="4096"
+                                  />
+                                </div>
+                                <div className={styles.pvField}>
+                                  <label className={styles.pvEditLabel}>{t('modelPanel.maxOutputTokens')}</label>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={editForm.max_output_tokens ?? ''}
+                                    onChange={e => setEditForm(f => ({ ...f, max_output_tokens: parseInt(e.target.value) || undefined }))}
+                                    className={styles.pvEditInput}
+                                    placeholder={t('modelPanel.defaultPlaceholder')}
+                                  />
+                                </div>
+                              </div>
+                              <div className={styles.pvField}>
+                                <label className={styles.pvEditLabel}>{t('modelPanel.apiKeyEnv')}</label>
                                 <input
+                                  value={editForm.api_key_env || ''}
+                                  onChange={e => setEditForm(f => ({ ...f, api_key_env: e.target.value }))}
                                   className={styles.pvEditInput}
-                                  type="number"
-                                  value={editForm.context_size}
-                                  onChange={e => setEditForm(f => ({ ...f, context_size: parseInt(e.target.value, 10) || 4096 }))}
+                                  placeholder={t('modelPanel.autoGenPlaceholder')}
                                 />
                               </div>
-                              <div className={styles.pvEditRow}>
-                                <label className={styles.pvEditLabel}>{t('modelPanel.maxOutput')}</label>
-                                <input
-                                  className={styles.pvEditInput}
-                                  type="number"
-                                  value={editForm.max_output_tokens ?? ''}
-                                  onChange={e => setEditForm(f => ({ ...f, max_output_tokens: e.target.value ? Number(e.target.value) : undefined }))}
-                                  placeholder={t('modelPanel.defaultPlaceholder')}
-                                />
-                              </div>
                             </div>
-                            <div className={styles.pvEditRow}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.capabilities')}</label>
-                              <div className={styles.pvCheckboxRow}>
-                                <label className={styles.pvCheckboxLabel}>
+
+                            <div className={styles.pvEditSection}>
+                              <div className={styles.pvEditSectionTitle}>{t('modelPanel.sectionCapabilities')}</div>
+                              <div className={styles.pvCapRow}>
+                                <label className={styles.pvCapCheck + ' ' + (editForm.vision ? styles.pvCapCheckActive : '')}>
                                   <input type="checkbox" checked={editForm.vision} onChange={e => setEditForm(f => ({ ...f, vision: e.target.checked }))} />
-                                  {t('modelPanel.vision')}
+                                  <IconEye size={12} />
+                                  <span>{t('modelPanel.vision')}</span>
                                 </label>
-                                <label className={styles.pvCheckboxLabel}>
+                                <label className={styles.pvCapCheck + ' ' + (editForm.reasoning ? styles.pvCapCheckActive : '')}>
                                   <input type="checkbox" checked={editForm.reasoning} onChange={e => setEditForm(f => ({ ...f, reasoning: e.target.checked }))} />
-                                  {t('modelPanel.reasoning')}
+                                  <IconBrain size={12} />
+                                  <span>{t('modelPanel.reasoning')}</span>
                                 </label>
-                                <label className={styles.pvCheckboxLabel}>
+                                <label className={styles.pvCapCheck + ' ' + (editForm.function_calling ? styles.pvCapCheckActive : '')}>
                                   <input type="checkbox" checked={editForm.function_calling} onChange={e => setEditForm(f => ({ ...f, function_calling: e.target.checked }))} />
-                                  {t('modelPanel.toolCalling')}
+                                  <IconWrench size={12} />
+                                  <span>{t('modelPanel.toolCalling')}</span>
                                 </label>
                               </div>
                             </div>
-                            <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.inputPriceUncached')}</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={editForm.input_price ?? ''}
-                                placeholder="e.g. DeepSeek: 7.26"
-                                onChange={e => setEditForm(f => ({ ...f, input_price: parseFloat(e.target.value) || 0 }))}
-                                className={styles.pvEditInput}
-                              />
+
+                            <div className={styles.pvEditSection}>
+                              <div className={styles.pvEditSectionTitle}>{t('modelPanel.sectionPricing')}</div>
+                              <div className={styles.pvPriceGrid}>
+                                <div className={styles.pvPriceCell}>
+                                  <label className={styles.pvPriceLabel}>{t('modelPanel.inputPriceUncached')}</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={editForm.input_price ?? ''}
+                                    placeholder="7.26"
+                                    onChange={e => setEditForm(f => ({ ...f, input_price: parseFloat(e.target.value) || 0 }))}
+                                    className={styles.pvPriceInput}
+                                  />
+                                </div>
+                                <div className={styles.pvPriceCell}>
+                                  <label className={styles.pvPriceLabel}>{t('modelPanel.inputPriceCached')}</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={editForm.cache_read_price ?? ''}
+                                    placeholder="1.45"
+                                    onChange={e => setEditForm(f => ({ ...f, cache_read_price: parseFloat(e.target.value) || 0 }))}
+                                    className={styles.pvPriceInput}
+                                  />
+                                </div>
+                                <div className={styles.pvPriceCell}>
+                                  <label className={styles.pvPriceLabel}>{t('modelPanel.cacheWritePrice')}</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={editForm.cache_write_price ?? ''}
+                                    placeholder="2.50"
+                                    onChange={e => setEditForm(f => ({ ...f, cache_write_price: parseFloat(e.target.value) || 0 }))}
+                                    className={styles.pvPriceInput}
+                                  />
+                                </div>
+                                <div className={styles.pvPriceCell}>
+                                  <label className={styles.pvPriceLabel}>{t('modelPanel.outputPrice')}</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={editForm.output_price ?? ''}
+                                    placeholder="10.00"
+                                    onChange={e => setEditForm(f => ({ ...f, output_price: parseFloat(e.target.value) || 0 }))}
+                                    className={styles.pvPriceInput}
+                                  />
+                                </div>
+                              </div>
                             </div>
-                            <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.inputPriceCached')}</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={editForm.cache_read_price ?? ''}
-                                placeholder="e.g. DeepSeek: 1.45"
-                                onChange={e => setEditForm(f => ({ ...f, cache_read_price: parseFloat(e.target.value) || 0 }))}
-                                className={styles.pvEditInput}
-                              />
-                            </div>
-                            <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.cacheWritePrice')}</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={editForm.cache_write_price ?? ''}
-                                placeholder="e.g. DeepSeek: 7.26"
-                                onChange={e => setEditForm(f => ({ ...f, cache_write_price: parseFloat(e.target.value) || 0 }))}
-                                className={styles.pvEditInput}
-                              />
-                            </div>
-                            <div className={styles.pvField}>
-                              <label className={styles.pvEditLabel}>{t('modelPanel.outputPrice')}</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={editForm.output_price ?? ''}
-                                placeholder="e.g. DeepSeek: 29.04"
-                                onChange={e => setEditForm(f => ({ ...f, output_price: parseFloat(e.target.value) || 0 }))}
-                                className={styles.pvEditInput}
-                              />
-                            </div>
+
                             <div className={styles.pvEditActions}>
                               <button onClick={handleCancelEdit} className={styles.pvEditCancelBtn}>{t('common.cancel')}</button>
                               <button onClick={handleSaveEdit} disabled={!editForm.name.trim()} className={styles.pvEditSaveBtn}>{t('common.save')}</button>
@@ -967,13 +1002,18 @@ export default function ModelConfigPanel() {
                     ))}
                   </div>
                 </div>
+              ) : (
+                <div className={styles.pvModelSection}>
+                  <div className={styles.pvModelEmpty}>{q ? t('modelPanel.noMatching') : t('modelPanel.noModels')}</div>
+                </div>
               )}
 
               {/* Discovered models */}
               {filteredDiscovered.length > 0 && (
                 <div className={styles.pvModelSection}>
                   <div className={styles.pvModelSectionHeader}>
-                    {t('modelPanel.addable')} ({filteredDiscovered.length})
+                    {t('modelPanel.addable')}
+                    <span className={styles.pvModelSectionCount}>{filteredDiscovered.length}</span>
                     {q && <span className={styles.pvModelFilterHint}>{t('modelPanel.filterHint', { n: newDiscovered.length })}</span>}
                   </div>
                   <div className={styles.pvModelList}>
@@ -984,6 +1024,11 @@ export default function ModelConfigPanel() {
                           {m.context_length != null && (
                             <span className={styles.pvModelCtx}>{formatContext(m.context_length)}</span>
                           )}
+                          <div className={styles.pvCapBadges}>
+                            {m.capabilities?.vision && <span className={styles.pvCapBadge} title={t('modelPanel.vision')}><IconEye size={11} /></span>}
+                            {m.capabilities?.reasoning && <span className={styles.pvCapBadge} title={t('modelPanel.reasoning')}><IconBrain size={11} /></span>}
+                            {m.capabilities?.function_calling && <span className={styles.pvCapBadge} title={t('modelPanel.toolCalling')}><IconWrench size={11} /></span>}
+                          </div>
                         </div>
                         <span className={styles.pvAddModelBtn}>{t('modelPanel.addModel')}</span>
                       </div>

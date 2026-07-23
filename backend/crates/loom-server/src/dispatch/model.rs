@@ -566,7 +566,16 @@ async fn handle_model_discover(state: &AppState, p: &Value) -> Result<Value, Jso
                         .filter(|&n| n > 0)
                 })
                 .or_else(|| known_context_window(id));
-            Some(json!({ "id": id, "context_length": ctx }))
+            let caps = extract_capabilities_from_api(item);
+            let pricing = extract_pricing_from_api(item);
+            let mut entry = json!({ "id": id, "context_length": ctx });
+            if let Some(c) = caps {
+                entry["capabilities"] = c;
+            }
+            if let Some(p) = pricing {
+                entry["pricing"] = p;
+            }
+            Some(entry)
         })
         .collect();
     Ok(json!({ "models": models }))
@@ -669,3 +678,209 @@ fn known_context_window(model_id: &str) -> Option<u64> {
     }
     None
 }
+
+/// Extract model capabilities from the raw API response item.
+/// Tries multiple common field names used by different providers.
+fn extract_capabilities_from_api(item: &Value) -> Option<Value> {
+    let mut caps = serde_json::Map::new();
+    
+    // Try provider-specific capability fields
+    let arch_modality = item.get("architecture")
+        .and_then(|a| a.get("modality"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    
+    // Vision: check modality, features, or explicit vision field
+    let has_vision = item.get("vision").and_then(|v| v.as_bool())
+        .or_else(|| item.get("supports_vision").and_then(|v| v.as_bool()))
+        .or_else(|| {
+            // OpenRouter: modality contains "image"
+            if arch_modality.contains("image") { return Some(true); }
+            // Check features array
+            if let Some(features) = item.get("features").and_then(|v| v.as_array()) {
+                for f in features {
+                    if let Some(s) = f.as_str() {
+                        let sl = s.to_lowercase();
+                        if sl.contains("vision") || sl.contains("image") { return Some(true); }
+                    }
+                }
+            }
+            // Check capabilities object from API
+            if let Some(c) = item.get("capabilities") {
+                if let Some(v) = c.get("vision").and_then(|v| v.as_bool()) { return Some(v); }
+            }
+            // Check supported_generation_methods (Google)
+            if let Some(methods) = item.get("supportedGenerationMethods").and_then(|v| v.as_array()) {
+                for m in methods {
+                    if let Some(s) = m.as_str() {
+                        if s.contains("image") || s.contains("vision") { return Some(true); }
+                    }
+                }
+            }
+            None
+        })
+        .unwrap_or(false);
+    
+    // Reasoning: check explicit fields or features
+    let has_reasoning = item.get("reasoning").and_then(|v| v.as_bool())
+        .or_else(|| item.get("supports_reasoning").and_then(|v| v.as_bool()))
+        .or_else(|| item.get("is_reasoning").and_then(|v| v.as_bool()))
+        .or_else(|| {
+            if let Some(features) = item.get("features").and_then(|v| v.as_array()) {
+                for f in features {
+                    if let Some(s) = f.as_str() {
+                        let sl = s.to_lowercase();
+                        if sl.contains("reason") || sl.contains("think") || sl.contains("chain_of_thought") {
+                            return Some(true);
+                        }
+                    }
+                }
+            }
+            if let Some(c) = item.get("capabilities") {
+                if let Some(r) = c.get("reasoning").and_then(|v| v.as_bool()) { return Some(r); }
+            }
+            None
+        })
+        .unwrap_or(false);
+    
+    // Function calling / tool use
+    let has_fc = item.get("function_calling").and_then(|v| v.as_bool())
+        .or_else(|| item.get("supports_functions").and_then(|v| v.as_bool()))
+        .or_else(|| item.get("supports_tool_choice").and_then(|v| v.as_bool()))
+        .or_else(|| item.get("tool_calling").and_then(|v| v.as_bool()))
+        .or_else(|| {
+            if let Some(features) = item.get("features").and_then(|v| v.as_array()) {
+                for f in features {
+                    if let Some(s) = f.as_str() {
+                        let sl = s.to_lowercase();
+                        if sl.contains("function") || sl.contains("tool") || sl.contains("agent") {
+                            return Some(true);
+                        }
+                    }
+                }
+            }
+            if let Some(c) = item.get("capabilities") {
+                if let Some(f) = c.get("function_calling").and_then(|v| v.as_bool()) { return Some(f); }
+                if let Some(f) = c.get("tool_use").and_then(|v| v.as_bool()) { return Some(f); }
+            }
+            None
+        })
+        .unwrap_or(false);
+    
+    if has_vision { caps.insert("vision".into(), Value::Bool(true)); }
+    if has_reasoning { caps.insert("reasoning".into(), Value::Bool(true)); }
+    if has_fc { caps.insert("function_calling".into(), Value::Bool(true)); }
+    
+    if caps.is_empty() { None } else { Some(Value::Object(caps)) }
+}
+
+/// Extract model pricing from the raw API response item.
+/// Different providers use different field names; this tries all common variants.
+/// Prices are normalized to per-million-tokens USD.
+fn extract_pricing_from_api(item: &Value) -> Option<Value> {
+    let mut p = serde_json::Map::new();
+    
+    // Helper: try to parse a price value from various representations
+    fn parse_price(v: &Value) -> Option<f64> {
+        if let Some(n) = v.as_f64() {
+            // If the value looks like per-token (< 0.01), convert to per-million
+            if n > 0.0 && n < 0.01 { return Some(n * 1_000_000.0); }
+            return Some(n);
+        }
+        if let Some(s) = v.as_str() {
+            if let Ok(n) = s.parse::<f64>() {
+                if n > 0.0 && n < 0.01 { return Some(n * 1_000_000.0); }
+                return Some(n);
+            }
+        }
+        None
+    }
+    
+    // 1. OpenRouter format: item.pricing.prompt / item.pricing.completion
+    //    Also: item.pricing.input / item.pricing.output
+    if let Some(pricing) = item.get("pricing") {
+        if let Some(v) = pricing.get("prompt").or_else(|| pricing.get("input"))
+            .or_else(|| pricing.get("input_cost"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("input_price".into(), json!(v));
+        }
+        if let Some(v) = pricing.get("completion").or_else(|| pricing.get("output"))
+            .or_else(|| pricing.get("output_cost"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("output_price".into(), json!(v));
+        }
+        if let Some(v) = pricing.get("cache_read").or_else(|| pricing.get("cached_input"))
+            .or_else(|| pricing.get("cache_read_cost"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("cache_read_price".into(), json!(v));
+        }
+        if let Some(v) = pricing.get("cache_write").or_else(|| pricing.get("cached_output"))
+            .or_else(|| pricing.get("cache_write_cost"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("cache_write_price".into(), json!(v));
+        }
+    }
+    
+    // 2. Flat fields on the item: input_cost_per_token, output_cost_per_token
+    //    Also: cost_per_input_token, cost_per_output_token
+    if !p.contains_key("input_price") {
+        if let Some(v) = item.get("input_cost_per_token")
+            .or_else(|| item.get("cost_per_input_token"))
+            .or_else(|| item.get("input_price"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("input_price".into(), json!(v));
+        }
+    }
+    if !p.contains_key("output_price") {
+        if let Some(v) = item.get("output_cost_per_token")
+            .or_else(|| item.get("cost_per_output_token"))
+            .or_else(|| item.get("output_price"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("output_price".into(), json!(v));
+        }
+    }
+    if !p.contains_key("cache_read_price") {
+        if let Some(v) = item.get("cache_read_price")
+            .or_else(|| item.get("cached_input_price"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("cache_read_price".into(), json!(v));
+        }
+    }
+    if !p.contains_key("cache_write_price") {
+        if let Some(v) = item.get("cache_write_price")
+            .or_else(|| item.get("cached_output_price"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("cache_write_price".into(), json!(v));
+        }
+    }
+    
+    // 3. Anthropic format: pricing in the model object
+    //    Some Anthropic-compatible endpoints return input_cost_per_m etc.
+    if !p.contains_key("input_price") {
+        if let Some(v) = item.get("input_cost_per_m")
+            .or_else(|| item.get("input_price_per_m"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("input_price".into(), json!(v));
+        }
+    }
+    if !p.contains_key("output_price") {
+        if let Some(v) = item.get("output_cost_per_m")
+            .or_else(|| item.get("output_price_per_m"))
+            .and_then(|v| parse_price(v))
+        {
+            p.insert("output_price".into(), json!(v));
+        }
+    }
+    
+    if p.is_empty() { None } else { Some(Value::Object(p)) }
+}
+

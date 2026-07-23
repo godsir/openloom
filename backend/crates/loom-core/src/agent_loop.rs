@@ -1071,34 +1071,13 @@ async fn run_agent_turn_inner(
     let mut safety_truncation_count: u32 = 0;
 
     for iteration in 0..config.max_iterations {
-        // Drain steering queue: inject any GUI-provided guidance messages
-        let steering_consumed: Vec<crate::event_bus::SteeringItem> = if let Some(ref queue) = config.steering_queue {
-            let mut msgs = queue.write().await;
-            let items: Vec<crate::event_bus::SteeringItem> = msgs.drain(..).collect();
-            for item in &items {
-                messages.push(Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text {
-                        text: format!("[用户指引] {}", item.text),
-                    }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                });
-            }
-            items
-        } else { Vec::new() };
-        // Notify frontend when we consumed steering items
-        if !steering_consumed.is_empty()
-            && let Some(ref bus) = config.event_bus {
-                let remaining = config.steering_queue.as_ref()
-                    .map(|q| q.try_read().map(|q| q.len()).unwrap_or(0))
-                    .unwrap_or(0);
-                bus.publish(crate::event_bus::AgentEvent::SteeringConsumed {
-                    session_id: config.session_id.clone(),
-                    remaining_count: remaining,
-                    items: steering_consumed,
-                });
-            }
+        // Steering queue drain DISABLED: queued items are now held until the turn
+        // ends, then auto-sent as a new user message by the frontend
+        // (autoSendPendingSteering in stream-buffer.ts). Previously items were
+        // injected as System messages each iteration, which caused
+        // them to disappear from the queue panel mid-turn instead of being
+        // delivered as a follow-up message after the turn completes.
+        let _steering_consumed: Vec<crate::event_bus::SteeringItem> = Vec::new();
         // Token budget check: stop if CURRENT window tokens exceed the budget
         // (was cumulative total_prompt, which falsely tripped after N iterations).
         let current_window_tokens: usize = if config.max_prompt_budget > 0 {
@@ -2133,34 +2112,13 @@ async fn run_agent_turn_streaming_inner(
     let mut safety_truncation_count: u32 = 0;
 
     for iteration in 0..config.max_iterations {
-        // Drain steering queue: inject any GUI-provided guidance messages
-        let steering_consumed: Vec<crate::event_bus::SteeringItem> = if let Some(ref queue) = config.steering_queue {
-            let mut msgs = queue.write().await;
-            let items: Vec<crate::event_bus::SteeringItem> = msgs.drain(..).collect();
-            for item in &items {
-                messages.push(Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text {
-                        text: format!("[用户指引] {}", item.text),
-                    }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                });
-            }
-            items
-        } else { Vec::new() };
-        // Notify frontend when we consumed steering items
-        if !steering_consumed.is_empty()
-            && let Some(ref bus) = config.event_bus {
-                let remaining = config.steering_queue.as_ref()
-                    .map(|q| q.try_read().map(|q| q.len()).unwrap_or(0))
-                    .unwrap_or(0);
-                bus.publish(crate::event_bus::AgentEvent::SteeringConsumed {
-                    session_id: config.session_id.clone(),
-                    remaining_count: remaining,
-                    items: steering_consumed,
-                });
-            }
+        // Steering queue drain DISABLED: queued items are now held until the turn
+        // ends, then auto-sent as a new user message by the frontend
+        // (autoSendPendingSteering in stream-buffer.ts). Previously items were
+        // injected as System messages each iteration, which caused
+        // them to disappear from the queue panel mid-turn instead of being
+        // delivered as a follow-up message after the turn completes.
+        let _steering_consumed: Vec<crate::event_bus::SteeringItem> = Vec::new();
         // Token budget check: stop if CURRENT window tokens exceed the budget
         // (was cumulative total_prompt, which falsely tripped after N iterations).
         let current_window_tokens: usize = if config.max_prompt_budget > 0 {

@@ -166,6 +166,7 @@ export default function InputArea() {
   const compactSession = useCallback(async () => {
     const sid = sessionId || (await ensureSession())
     if (!sid) return
+    useStore.getState().setCompacting(true)
     try {
       const result = await loomRpc<{ ok: boolean; summary?: string; chars?: number }>('chat.compact', { session_id: sid })
       if (result.ok && result.summary) {
@@ -182,6 +183,8 @@ export default function InputArea() {
       }
     } catch {
       useStore.getState().addToast({ type: 'warning', message: t('slash.compactFailed') })
+    } finally {
+      useStore.getState().setCompacting(false)
     }
   }, [sessionId, ensureSession, t])
 

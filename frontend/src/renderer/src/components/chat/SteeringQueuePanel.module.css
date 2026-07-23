@@ -5,7 +5,7 @@
   border: 1px solid var(--border-accent);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-lg);
-  max-height: 200px;
+  max-height: 280px;
   overflow: hidden;
   margin: 0 12px 4px;
   animation: panelIn 0.15s var(--ease-out);
@@ -15,7 +15,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
+  padding: 8px 12px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
@@ -23,9 +23,55 @@
   flex-shrink: 0;
 }
 
-.count {
-  font-weight: 400;
-  color: var(--text-muted);
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  border-radius: 9px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sendAllBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.sendAllBtn:hover {
+  background: var(--accent);
+  color: var(--bg);
 }
 
 .clearBtn {
@@ -36,13 +82,14 @@
   border: none;
   cursor: pointer;
   color: var(--text-muted);
-  padding: 2px;
+  padding: 3px;
   border-radius: 4px;
-  transition: color 0.15s;
+  transition: all 0.15s;
 }
 
 .clearBtn:hover {
   color: var(--red);
+  background: rgba(var(--red-rgb), 0.08);
 }
 
 .list {
@@ -51,7 +98,7 @@
 }
 
 .empty {
-  padding: 14px 12px;
+  padding: 16px 12px;
   font-size: 11px;
   color: var(--text-muted);
   text-align: center;
@@ -59,60 +106,64 @@
 
 .item {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  flex-direction: column;
+  padding: 6px 10px;
   font-size: 12px;
   color: var(--text);
   line-height: 1.5;
   transition: background 0.1s;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.item:last-child {
+  border-bottom: none;
 }
 
 .item:hover {
   background: var(--bg-active);
 }
 
-.index {
-  color: var(--text-muted);
-  flex-shrink: 0;
-  font-size: 11px;
-  min-width: 18px;
-  text-align: right;
+.item.dragging {
+  opacity: 0.4;
 }
 
-.text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.item.dragOver {
+  border-top: 2px solid var(--accent);
 }
 
-.actions {
+.dragHandle {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: grab;
+  color: var(--text-muted);
+  padding: 2px;
+  border-radius: 4px;
+  transition: all 0.15s;
   flex-shrink: 0;
 }
 
-.forceBtn {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--accent);
-  background: rgba(var(--accent-rgb), 0.08);
-  border: 1px solid rgba(var(--accent-rgb), 0.2);
-  border-radius: 4px;
-  padding: 2px 8px;
+.dragHandle:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+
+.itemHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
+  flex: 1;
 }
 
-.forceBtn:hover {
-  background: var(--accent);
-  color: var(--bg);
-}
-
-.removeBtn {
+.expandBtn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -120,13 +171,132 @@
   border: none;
   cursor: pointer;
   color: var(--text-muted);
-  padding: 2px;
-  border-radius: 4px;
+  padding: 0;
+  flex-shrink: 0;
   transition: color 0.15s;
+}
+
+.expandBtn:hover {
+  color: var(--text);
+}
+
+.index {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 16px;
+}
+
+.previewText {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.editContainer {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editInput {
+  flex: 1;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+.editInput:focus {
+  border-color: var(--accent);
+}
+
+.saveBtn,
+.cancelBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.saveBtn {
+  color: var(--green, #10b981);
+}
+
+.saveBtn:hover {
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.cancelBtn {
+  color: var(--text-muted);
+}
+
+.cancelBtn:hover {
+  color: var(--red);
+  background: rgba(var(--red-rgb), 0.08);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 28px;
+}
+
+.sendBtn,
+.editBtn,
+.removeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  color: var(--text-muted);
+}
+
+.sendBtn:hover {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.editBtn:hover {
+  color: var(--text);
+  background: var(--bg-active);
 }
 
 .removeBtn:hover {
   color: var(--red);
+  background: rgba(var(--red-rgb), 0.08);
+}
+
+.footer {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
 }
 
 @keyframes panelIn {
