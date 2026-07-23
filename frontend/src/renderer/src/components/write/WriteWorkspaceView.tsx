@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react'
+import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { useStore } from '../../stores'
 import { getWriteThreadKey, useWriteStore } from '../../stores/write'
 import { useLocale } from '../../i18n'
@@ -16,6 +16,7 @@ import styles from './WriteWorkspaceView.module.css'
 import { composeWritePrompt, limitWriteContext } from '../../write/quoted-selection'
 import { resolveAgentPreset } from '../../write/agent-presets'
 import { guardWriteNavigation } from '../../write/navigation-guard'
+import { openWriteAssistantWindow } from '../../write/write-assistant-window'
 
 export const WriteWorkspaceView: React.FC = () => {
   const { t } = useLocale()
@@ -28,7 +29,7 @@ export const WriteWorkspaceView: React.FC = () => {
   const {
     workspaceRoot, setWorkspaceRoot, autoSaveIntervalMs, fontSize, setFontSize,
     activeFilePath, fileContent, saveStatus, setSaveStatus, fileTruncated,
-    assistantOpen, toggleAssistant, setModalState, showToast, clearToast, toastMessage,
+    assistantOpen, setModalState, showToast, clearToast, toastMessage,
     fileThreads, setFileThread, removeFileThread, writingAgentName, retrievalEnabled,
     setFileContent, setFileSize, setFileTruncated,
   } = useWriteStore()
@@ -36,6 +37,7 @@ export const WriteWorkspaceView: React.FC = () => {
   // ── Non-state refs ──
   const fileContentRef = useRef(fileContent); fileContentRef.current = fileContent
   const pendingSessions = useRef<Record<string, Promise<string>>>({})
+  const [assistantWindow, setAssistantWindow] = useState<Window | null>(null)
 
   // ── Quick suggestions ──
   const suggestions = [
@@ -161,8 +163,25 @@ export const WriteWorkspaceView: React.FC = () => {
   }, [workspaceRoot, activeFilePath, fileThreads, evictSession, removeFileThread])
 
   const handleAssistantClose = useCallback(() => {
+    setAssistantWindow(null)
     useWriteStore.getState().setAssistantOpen(false)
   }, [])
+
+  const handleToggleAssistant = useCallback(() => {
+    if (useWriteStore.getState().assistantOpen) {
+      setAssistantWindow(null)
+      useWriteStore.getState().setAssistantOpen(false)
+      return
+    }
+
+    const popup = openWriteAssistantWindow()
+    if (!popup) {
+      showToast('error', '无法打开 AI 写作助手窗口')
+      return
+    }
+    setAssistantWindow(popup)
+    useWriteStore.getState().setAssistantOpen(true)
+  }, [showToast])
 
   const handleStaleSession = useCallback((dead: string) => {
     for (const [fp, sid] of Object.entries(fileThreads)) { if (sid === dead) removeFileThread(fp) }
@@ -260,13 +279,14 @@ export const WriteWorkspaceView: React.FC = () => {
       <div className={styles.body}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {workspaceRoot && (
-            <WriteToolbar onNewFile={handleNewFile} onSave={handleSave} onToggleAssistant={toggleAssistant} />
+            <WriteToolbar onNewFile={handleNewFile} onSave={handleSave} onToggleAssistant={handleToggleAssistant} />
           )}
           <WriteDocumentPane onSelectWorkspace={handleSelectWorkspace} onSendToAssistant={handleAssistantSend} />
         </div>
       </div>
-      {workspaceRoot && assistantOpen && (
+      {workspaceRoot && assistantOpen && assistantWindow && (
         <WriteAssistantWindow
+          popup={assistantWindow}
           title={t('write.aiWritingAssistant')}
           onClose={handleAssistantClose}
         >

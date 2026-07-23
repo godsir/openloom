@@ -41,6 +41,7 @@
   font-size: 12px;
   background: var(--bg-card);
   color: var(--text);
+  caret-color: var(--text);
   outline: none;
   font-family: inherit;
   transition: border-color var(--dur-fast) var(--ease-out);

@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './WriteAssistantWindow.module.css'
 
-const WINDOW_NAME = 'openloom-write-assistant'
-const WINDOW_FEATURES = 'popup=yes,width=380,height=640,resizable=yes'
+const pendingCloseTimers = new WeakMap<Window, ReturnType<typeof setTimeout>>()
 
 interface WriteAssistantWindowProps {
+  popup: Window
   title: string
   onClose: () => void
   children: React.ReactNode
@@ -28,6 +28,7 @@ function syncRootAppearance(target: Document): void {
 }
 
 export const WriteAssistantWindow: React.FC<WriteAssistantWindowProps> = ({
+  popup,
   title,
   onClose,
   children,
@@ -35,8 +36,13 @@ export const WriteAssistantWindow: React.FC<WriteAssistantWindowProps> = ({
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    const popup = window.open('about:blank', WINDOW_NAME, WINDOW_FEATURES)
-    if (!popup) {
+    const pendingClose = pendingCloseTimers.get(popup)
+    if (pendingClose) {
+      clearTimeout(pendingClose)
+      pendingCloseTimers.delete(popup)
+    }
+
+    if (popup.closed) {
       onClose()
       return
     }
@@ -59,10 +65,14 @@ export const WriteAssistantWindow: React.FC<WriteAssistantWindowProps> = ({
     return () => {
       appearanceObserver.disconnect()
       popup.removeEventListener('beforeunload', handleClosed)
-      if (!popup.closed) popup.close()
+      const closeTimer = setTimeout(() => {
+        pendingCloseTimers.delete(popup)
+        if (!popup.closed) popup.close()
+      }, 0)
+      pendingCloseTimers.set(popup, closeTimer)
       setContainer(null)
     }
-  }, [onClose, title])
+  }, [onClose, popup, title])
 
   return container ? createPortal(children, container) : null
 }

@@ -51,6 +51,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       padding: '16px',
       lineHeight: '1.8',
       minHeight: '100%',
+      caretColor: 'var(--text)',
+    },
+    '.cm-cursor, .cm-dropCursor': {
+      borderLeftColor: 'var(--text)',
     },
     '.cm-gutters': {
       background: 'var(--bg-surface)',

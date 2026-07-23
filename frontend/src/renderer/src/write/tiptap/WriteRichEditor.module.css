@@ -8,7 +8,12 @@
   padding: 24px 32px;
   font-family: var(--font);
   color: var(--text);
+  caret-color: var(--text);
   line-height: 1.8;
+}
+
+.editor :global(.ProseMirror) {
+  caret-color: var(--text);
 }
 
 /* ── Headings ── */

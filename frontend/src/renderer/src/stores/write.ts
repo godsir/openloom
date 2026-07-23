@@ -259,7 +259,7 @@ interface WriteUiSlice {
 }
 
 const createWriteUiSlice = (set: any, _get: any): WriteUiSlice => ({
-  assistantOpen: true,
+  assistantOpen: false,
   inlineAgentVisible: false,
   inlineAgentPosition: { x: 0, y: 0, placement: 'above' },
   modalState: 'none',
