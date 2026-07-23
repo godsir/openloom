@@ -2,6 +2,10 @@ import { StateCreator } from 'zustand'
 import { loomRpc } from '../services/jsonrpc'
 import { t as _t } from '../i18n'
 import type { KgNode, KgEdge, KgGraph, KgStats, Cognition, CognitionHistory, MemoryHealth, MemoryQualityReport, PersonaData, SessionPatternReport, ConsolidationReport, ForgettingReport, PipelineStatus, LayerStats } from '../types/bindings'
+import { loadAllKgNodes } from './loadAllKgNodes'
+
+let kgListGeneration = 0
+let kgGraphGeneration = 0
 
 export interface KgSlice {
   kgSearchResults: KgNode[]
@@ -26,10 +30,10 @@ export interface KgSlice {
   kgSearch: (query: string) => Promise<void>
   kgExpandNode: (nodeName: string, scope?: string) => Promise<void>
   kgWalkFrom: (startName: string, maxDepth?: number, scope?: string) => Promise<void>
-  kgLoadGraph: (seeds: string[], maxDepth?: number, scope?: string) => Promise<void>
+  kgLoadGraph: (seeds: string[], maxDepth?: number, scope?: string, nodes?: KgNode[]) => Promise<void>
   kgLoadStats: () => Promise<void>
   kgClearGraph: () => void
-  kgListNodes: (scope?: string) => Promise<void>
+  kgListNodes: (scope?: string) => Promise<KgNode[]>
   kgNodeDelete: (name: string) => Promise<void>
   kgEdgeDelete: (source: string, target: string, relation: string) => Promise<void>
   cognitionListBySubject: (subject: string, scope?: string) => Promise<void>
@@ -84,6 +88,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   },
 
   kgExpandNode: async (nodeName, scope?) => {
+    const generation = ++kgGraphGeneration
     set({ kgSelectedNode: null })
     const result = await loomRpc<KgGraph>('kg.neighbors', { node_name: nodeName, limit: 30, scope })
     const graph = result as KgGraph
@@ -94,7 +99,9 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
       const center: KgNode = (get().kgSearchResults.find(n => n.name === nodeName))
         ?? get().kgNodeList.find(n => n.name === nodeName)
         ?? { node_id: 0, name: nodeName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global' }
-      set({ kgGraph: { nodes: [center, ...graph.nodes], edges: graph.edges } })
+      if (generation === kgGraphGeneration) {
+        set({ kgGraph: { nodes: [center, ...graph.nodes], edges: graph.edges } })
+      }
       return
     }
 
@@ -106,32 +113,41 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     const edgeSet = new Set(prev.edges.map(edgeKey))
     const newEdges = graph.edges.filter(e => !edgeSet.has(edgeKey(e)))
 
-    set({
-      kgGraph: {
-        nodes: [...nodeMap.values()],
-        edges: [...prev.edges, ...newEdges],
-      },
-    })
-  },
-
-  kgWalkFrom: async (startName, maxDepth = 2, scope) => {
-    const result = await loomRpc<KgGraph>('kg.walk', { start_name: startName, max_depth: maxDepth, scope, limit: 50 })
-    if (result.nodes?.length) {
-      set({ kgGraph: result, kgSelectedNode: null })
-    } else {
-      // At minimum show the start node itself so the graph isn't stuck empty
-      const startNode = get().kgNodeList.find(n => n.name === startName)
+    if (generation === kgGraphGeneration) {
       set({
         kgGraph: {
-          nodes: startNode ? [startNode] : [{ node_id: 0, name: startName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global' }],
-          edges: [],
+          nodes: [...nodeMap.values()],
+          edges: [...prev.edges, ...newEdges],
         },
-        kgSelectedNode: null,
       })
     }
   },
 
-  kgLoadGraph: async (seeds, maxDepth = 2, scope) => {
+  kgWalkFrom: async (startName, maxDepth = 2, scope) => {
+    const generation = ++kgGraphGeneration
+    const result = await loomRpc<KgGraph>('kg.walk', { start_name: startName, max_depth: maxDepth, scope, limit: 50 })
+    if (result.nodes?.length) {
+      if (generation === kgGraphGeneration) {
+        set({ kgGraph: result, kgSelectedNode: null })
+      }
+    } else {
+      // At minimum show the start node itself so the graph isn't stuck empty
+      const startNode = get().kgNodeList.find(n => n.name === startName)
+      if (generation === kgGraphGeneration) {
+        set({
+          kgGraph: {
+            nodes: startNode ? [startNode] : [{ node_id: 0, name: startName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global' }],
+            edges: [],
+          },
+          kgSelectedNode: null,
+        })
+      }
+    }
+  },
+
+  kgLoadGraph: async (seeds, maxDepth = 2, scope, nodes) => {
+    const generation = ++kgGraphGeneration
+    const sourceNodes = nodes ?? get().kgNodeList
     // ── Approach C: Galaxy-aware graph loading ───────────────────────
     // Phase 1: Walk USER depth 1 → discover galaxy centres (1-hop neighbours)
     // Phase 2: Walk each centre depth=maxDepth → build its galaxy
@@ -211,16 +227,18 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
       }
 
       // Add orphan nodes from kgNodeList as distant stars
-      if (get().kgNodeList.length > nodeMap.size) {
-        for (const n of get().kgNodeList) {
+      if (sourceNodes.length > nodeMap.size) {
+        for (const n of sourceNodes) {
           if (!nodeMap.has(n.name)) addNode(n, 999)
         }
       }
 
-      set({
-        kgGraph: { nodes: [...nodeMap.values()], edges: galaxyEdges },
-        kgSelectedNode: null,
-      })
+      if (generation === kgGraphGeneration) {
+        set({
+          kgGraph: { nodes: [...nodeMap.values()], edges: galaxyEdges },
+          kgSelectedNode: null,
+        })
+      }
     } else {
       // ── Fallback: no USER neighbours → walk from seed list in parallel
       const walkResults = await Promise.all(
@@ -238,16 +256,18 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
         if (result) addResult(result, name === 'USER' ? 0 : 99)
       }
 
-      if (nodeMap.size === 0 || get().kgNodeList.length > nodeMap.size) {
-        for (const n of get().kgNodeList) {
+      if (nodeMap.size === 0 || sourceNodes.length > nodeMap.size) {
+        for (const n of sourceNodes) {
           if (!nodeMap.has(n.name)) addNode(n, 999)
         }
       }
 
-      set({
-        kgGraph: { nodes: [...nodeMap.values()], edges: [...edgeMap.values()] },
-        kgSelectedNode: null,
-      })
+      if (generation === kgGraphGeneration) {
+        set({
+          kgGraph: { nodes: [...nodeMap.values()], edges: [...edgeMap.values()] },
+          kgSelectedNode: null,
+        })
+      }
     }
   },
 
@@ -261,15 +281,24 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     }
   },
 
-  kgClearGraph: () => set({ kgGraph: null, kgSelectedNode: null }),
+  kgClearGraph: () => {
+    kgGraphGeneration++
+    set({ kgGraph: null, kgSelectedNode: null })
+  },
 
   kgListNodes: async (scope) => {
+    const generation = ++kgListGeneration
     try {
-      const result = await loomRpc<{ nodes: KgNode[] }>('kg.list', { limit: 50, scope })
-      set({ kgNodeList: result.nodes ?? [] })
+      const nodes = await loadAllKgNodes(async (limit, offset) => {
+        const result = await loomRpc<{ nodes: KgNode[] }>('kg.list', { limit, offset, scope })
+        return result.nodes ?? []
+      })
+      if (generation === kgListGeneration) set({ kgNodeList: nodes })
+      return nodes
     } catch (err) {
       console.error('[kgListNodes] failed:', err)
       ;(get() as any).addToast?.({ type: 'error', message: _t('kg.loadFailed') })
+      return []
     }
   },
 

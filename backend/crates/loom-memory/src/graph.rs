@@ -999,14 +999,14 @@ impl<'a> GraphStore<'a> {
                         CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope,
                         COALESCE(n.layer, 'semantic') as layer
                  FROM kg_nodes n WHERE n.scope = ?3 OR n.scope = 'global'
-                 ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
+                 ORDER BY n.last_updated DESC, n.id DESC LIMIT ?1 OFFSET ?2",
                 true
             ),
             None => (
                 "SELECT n.id, n.name, n.entity_type, n.description, n.confidence,
                         CAST(NULL AS TEXT) as relation_type, CAST(NULL AS INTEGER) as distance, n.scope,
                         COALESCE(n.layer, 'semantic') as layer
-                 FROM kg_nodes n ORDER BY n.last_updated DESC LIMIT ?1 OFFSET ?2",
+                 FROM kg_nodes n ORDER BY n.last_updated DESC, n.id DESC LIMIT ?1 OFFSET ?2",
                 false
             ),
         };

@@ -88,6 +88,7 @@ export default function KnowledgeGraphTab({
 
   /** Suppresses auto-populate after user intentionally clears the graph */
   const userClearedGraph = useRef(false)
+  const userChangedGraph = useRef(false)
 
   const entityTypeCn = useCallback((type: string): string => {
     // t() 缺失键时返回键名本身而非 null，`?? type` 永远不生效；改为检测返回值
@@ -104,21 +105,16 @@ export default function KnowledgeGraphTab({
   }, [t])
 
   useEffect(() => {
-    kgLoadStats()
+    let cancelled = false
     const effectiveScope = scopeFilter === 'all' ? undefined
       : scopeFilter === 'session' ? (currentSessionId ?? undefined)
       : scopeFilter
-    kgListNodes(effectiveScope)
-  }, [kgLoadStats, kgListNodes, scopeFilter, currentSessionId])
-
-  // Auto-populate graph when switching to graph tab with no data.
-  useEffect(() => {
-    if (activeTab !== 'graph') {
-      userClearedGraph.current = false
-      return
-    }
-    if (!kgGraph && !userClearedGraph.current) {
-      const list = kgSearchResults.length > 0 ? kgSearchResults : kgNodeList
+    const load = async () => {
+      userChangedGraph.current = false
+      kgLoadStats()
+      const nodes = await kgListNodes(effectiveScope)
+      if (cancelled || activeTab !== 'graph' || nodes.length === 0 || userClearedGraph.current || userChangedGraph.current) return
+      const list = kgSearchResults.length > 0 ? kgSearchResults : nodes
       const seen = new Set(['USER'])
       const extras: string[] = []
       for (const n of list) {
@@ -130,17 +126,12 @@ export default function KnowledgeGraphTab({
       }
       const seeds = ['USER', ...extras]
 
-      if (seeds.length > 0) {
-        const effectiveScope = scopeFilter === 'all' ? undefined
-          : scopeFilter === 'session' ? (currentSessionId ?? undefined)
-          : scopeFilter
-        console.log('[KnowledgeGraphTab] Auto-populating graph from seeds:', seeds, 'scope:', effectiveScope)
-        kgLoadGraph(seeds, 2, effectiveScope)
-      } else {
-        console.log('[KnowledgeGraphTab] No data available to populate graph')
-      }
+      console.log('[KnowledgeGraphTab] Auto-populating graph from seeds:', seeds, 'scope:', effectiveScope)
+      await kgLoadGraph(seeds, 2, effectiveScope, nodes)
     }
-  }, [activeTab, kgGraph, kgNodeList, kgSearchResults, kgLoadGraph, scopeFilter, currentSessionId])
+    load()
+    return () => { cancelled = true }
+  }, [activeTab, kgLoadStats, kgListNodes, kgSearchResults, kgLoadGraph, scopeFilter, currentSessionId])
 
   // Debug: log when graph data changes
   useEffect(() => {
@@ -196,6 +187,7 @@ export default function KnowledgeGraphTab({
     async (name: string) => {
       if (graphOpBusy) return
       userClearedGraph.current = false
+      userChangedGraph.current = true
       setTooltip(null)
       const effectiveScope = scopeFilter === 'all' ? undefined
         : scopeFilter === 'session' ? (currentSessionId ?? undefined)
@@ -216,6 +208,7 @@ export default function KnowledgeGraphTab({
     async (name: string) => {
       if (graphOpBusy) return
       userClearedGraph.current = false
+      userChangedGraph.current = true
       setTooltip(null)
       const effectiveScope = scopeFilter === 'all' ? undefined
         : scopeFilter === 'session' ? (currentSessionId ?? undefined)
