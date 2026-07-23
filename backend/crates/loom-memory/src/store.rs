@@ -460,11 +460,28 @@ impl<'a> ModelConfigStore<'a> {
     pub fn upsert(&self, config: &loom_types::ModelConfig) -> Result<()> {
         let caps_json = serde_json::to_string(&config.capabilities).unwrap_or_default();
         self.conn.execute(
-            "INSERT OR REPLACE INTO model_configs
+            "INSERT INTO model_configs
              (name, model, model_type, backend, base_url, api_key_env,
               context_size, max_output_tokens, backend_label, capabilities, api_format,
-              input_price, output_price, cache_read_price, cache_write_price, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))",
+              input_price, output_price, cache_read_price, cache_write_price, compact_mode, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, datetime('now'))
+             ON CONFLICT(name) DO UPDATE SET
+               model = excluded.model,
+               model_type = excluded.model_type,
+               backend = excluded.backend,
+               base_url = excluded.base_url,
+               api_key_env = excluded.api_key_env,
+               context_size = excluded.context_size,
+               max_output_tokens = excluded.max_output_tokens,
+               backend_label = excluded.backend_label,
+               capabilities = excluded.capabilities,
+               api_format = excluded.api_format,
+               input_price = excluded.input_price,
+               output_price = excluded.output_price,
+               cache_read_price = excluded.cache_read_price,
+               cache_write_price = excluded.cache_write_price,
+               compact_mode = excluded.compact_mode,
+               updated_at = datetime('now')",
             params![
                 config.name,
                 config.model,
@@ -485,6 +502,7 @@ impl<'a> ModelConfigStore<'a> {
                 config.output_price,
                 config.cache_read_price,
                 config.cache_write_price,
+                config.compact_mode,
             ],
         )?;
         Ok(())
@@ -494,7 +512,7 @@ impl<'a> ModelConfigStore<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
                     context_size, max_output_tokens, is_active, backend_label, capabilities, api_format,
-                    input_price, output_price, cache_read_price, cache_write_price
+                    input_price, output_price, cache_read_price, cache_write_price, compact_mode
              FROM model_configs WHERE name = ?1",
         )?;
         let row = stmt
@@ -527,7 +545,7 @@ impl<'a> ModelConfigStore<'a> {
                     output_price: row.get::<_, f64>(13).unwrap_or(0.0),
                     cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
                     cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
-                    compact_mode: false,
+                    compact_mode: row.get::<_, i64>(16).unwrap_or(0) != 0,
                 })
             })
             .ok();
@@ -538,7 +556,7 @@ impl<'a> ModelConfigStore<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
                     context_size, max_output_tokens, is_active, backend_label, capabilities, api_format,
-                    input_price, output_price, cache_read_price, cache_write_price
+                    input_price, output_price, cache_read_price, cache_write_price, compact_mode
              FROM model_configs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -569,7 +587,7 @@ impl<'a> ModelConfigStore<'a> {
                 output_price: row.get::<_, f64>(13).unwrap_or(0.0),
                 cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
                 cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
-                compact_mode: false,
+                compact_mode: row.get::<_, i64>(16).unwrap_or(0) != 0,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -595,7 +613,7 @@ impl<'a> ModelConfigStore<'a> {
         let mut stmt = self.conn.prepare(
             "SELECT name, model, model_type, backend, base_url, api_key_env,
                     context_size, max_output_tokens, is_active, backend_label, capabilities, api_format,
-                    input_price, output_price, cache_read_price, cache_write_price
+                    input_price, output_price, cache_read_price, cache_write_price, compact_mode
              FROM model_configs WHERE is_active = 1 LIMIT 1",
         )?;
         let row = stmt
@@ -628,7 +646,7 @@ impl<'a> ModelConfigStore<'a> {
                     output_price: row.get::<_, f64>(13).unwrap_or(0.0),
                     cache_read_price: row.get::<_, f64>(14).unwrap_or(0.0),
                     cache_write_price: row.get::<_, f64>(15).unwrap_or(0.0),
-                    compact_mode: false,
+                    compact_mode: row.get::<_, i64>(16).unwrap_or(0) != 0,
                 })
             })
             .ok();
@@ -842,4 +860,45 @@ pub fn set_default_workspace(path: &str) -> Result<()> {
     let config = serde_json::json!({ "default_workspace": path });
     std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use loom_types::ModelConfig;
+
+    use super::ModelConfigStore;
+    use crate::config_db::ConfigDb;
+
+    #[test]
+    fn model_config_compact_mode_survives_all_reads_and_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.db");
+        {
+            let db = ConfigDb::open(&path).unwrap();
+            let store = ModelConfigStore::new(db.conn());
+            store
+                .upsert(&ModelConfig {
+                    name: "compact".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            store.set_active("compact").unwrap();
+            store
+                .upsert(&ModelConfig {
+                    name: "compact".into(),
+                    compact_mode: true,
+                    ..Default::default()
+                })
+                .unwrap();
+
+            assert!(store.get("compact").unwrap().unwrap().compact_mode);
+            assert!(store.list().unwrap()[0].compact_mode);
+            assert!(store.get_active().unwrap().unwrap().compact_mode);
+        }
+
+        let db = ConfigDb::open(&path).unwrap();
+        let store = ModelConfigStore::new(db.conn());
+        assert!(store.get("compact").unwrap().unwrap().compact_mode);
+        assert!(store.get_active().unwrap().unwrap().compact_mode);
+    }
 }

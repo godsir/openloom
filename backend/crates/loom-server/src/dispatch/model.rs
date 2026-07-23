@@ -47,6 +47,7 @@ async fn handle_model_list(state: &AppState) -> Result<Value, JsonRpcError> {
                 "base_url": c.base_url,
                 "is_active": active.as_deref() == Some(&c.name),
                 "context_size": c.context_size,
+                "compact_mode": c.compact_mode,
                 "capabilities": c.capabilities,
                 "api_format": c.api_format,
                 "api_key_env": c.api_key_env,
@@ -886,5 +887,47 @@ fn extract_pricing_from_api(item: &Value) -> Option<Value> {
     }
     
     if p.is_empty() { None } else { Some(Value::Object(p)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use loom_bridge::BridgeManager;
+    use loom_core::Orchestrator;
+    use loom_types::ModelConfig;
+    use tokio::sync::RwLock;
+    use tokio_util::sync::CancellationToken;
+
+    use super::handle_model_list;
+    use crate::AppState;
+
+    #[tokio::test]
+    async fn model_list_includes_compact_mode() {
+        let data_dir =
+            std::env::temp_dir().join(format!("openloom-model-list-{}", uuid::Uuid::now_v7()));
+        let orchestrator = Arc::new(Orchestrator::new(3, 20, 120, data_dir.clone()));
+        orchestrator
+            .model_config_create(ModelConfig {
+                name: "compact".into(),
+                compact_mode: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let state = AppState::new(
+            orchestrator,
+            Arc::new(BridgeManager::new()),
+            data_dir.clone(),
+            CancellationToken::new(),
+            Arc::new(RwLock::new(HashMap::new())),
+        );
+
+        let result = handle_model_list(&state).await.unwrap();
+        assert_eq!(result["models"][0]["compact_mode"], true);
+
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
 }
 

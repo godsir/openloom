@@ -1,0 +1,2 @@
+ALTER TABLE model_configs
+ADD COLUMN compact_mode INTEGER NOT NULL DEFAULT 0;

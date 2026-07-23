@@ -3448,19 +3448,30 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         prev_name: &str,
     ) -> Result<()> {
         let new_name = config.name.clone();
+        let was_active = self.active_model_name.read().await.as_deref() == Some(prev_name);
         let store = self.memory_store.read().await;
         if let Some(ref s) = *store {
             if new_name != prev_name {
                 let _ = s.delete_model_config(prev_name).await;
             }
             s.save_model_config(&config).await?;
+            if was_active && new_name != prev_name {
+                s.set_active_model(&new_name).await?;
+            }
         }
         drop(store);
         let mut cache = self.model_configs.write().await;
         if new_name != prev_name {
             cache.remove(prev_name);
         }
-        cache.insert(new_name, config);
+        cache.insert(new_name.clone(), config.clone());
+        drop(cache);
+        if was_active {
+            if new_name != prev_name {
+                *self.active_model_name.write().await = Some(new_name);
+            }
+            self.try_build_cloud_client(&config).await;
+        }
         Ok(())
     }
 
