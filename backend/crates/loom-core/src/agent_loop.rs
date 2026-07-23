@@ -836,7 +836,7 @@ async fn run_agent_turn_inner(
     let history_budget = (cw as f32 * keep_recent_pct) as usize;
     let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
     let opts = AssembleOptions {
-        persona: config.persona.clone(),
+        persona: if config.compact_mode() { None } else { config.persona.clone() },
         summary: config.summary.clone(),
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
@@ -900,16 +900,19 @@ async fn run_agent_turn_inner(
     // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
     if let Some(ref note) = config.continuation_note
         && !note.is_empty() {
-            let insert_pos = 1
-                + config.few_shots.len()
-                + config
-                    .dynamic_context
-                    .as_ref()
-                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
-                + config
-                    .todo_context
-                    .as_ref()
-                    .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
+            let insert_pos = if config.compact_mode() {
+                1
+            } else {
+                1 + config.few_shots.len()
+                    + config
+                        .dynamic_context
+                        .as_ref()
+                        .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
+                    + config
+                        .todo_context
+                        .as_ref()
+                        .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 })
+            };
             messages.insert(
                 insert_pos,
                 Message {
@@ -1069,7 +1072,7 @@ async fn run_agent_turn_inner(
 
     // ── Prefix digest: compute SHA256 fingerprint of stable prefix ──
     let digest = assembler.compute_prefix_digest(&AssembleOptions {
-        persona: config.persona.clone(),
+        persona: if config.compact_mode() { None } else { config.persona.clone() },
         summary: config.summary.clone(),
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
@@ -1810,7 +1813,7 @@ async fn run_agent_turn_streaming_inner(
     let history_budget = (cw as f32 * keep_recent_pct) as usize;
     let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
     let opts = AssembleOptions {
-        persona: config.persona.clone(),
+        persona: if config.compact_mode() { None } else { config.persona.clone() },
         summary: config.summary.clone(),
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
@@ -1854,16 +1857,19 @@ async fn run_agent_turn_streaming_inner(
     // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
     if let Some(ref note) = config.continuation_note
         && !note.is_empty() {
-            let insert_pos = 1
-                + config.few_shots.len()
-                + config
-                    .dynamic_context
-                    .as_ref()
-                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
-                + config
-                    .todo_context
-                    .as_ref()
-                    .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 });
+            let insert_pos = if config.compact_mode() {
+                1
+            } else {
+                1 + config.few_shots.len()
+                    + config
+                        .dynamic_context
+                        .as_ref()
+                        .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
+                    + config
+                        .todo_context
+                        .as_ref()
+                        .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 })
+            };
             messages.insert(
                 insert_pos,
                 Message {
@@ -2116,7 +2122,7 @@ async fn run_agent_turn_streaming_inner(
 
     // ── Prefix digest (streaming): compute SHA256 fingerprint of stable prefix ──
     let digest = assembler.compute_prefix_digest(&AssembleOptions {
-        persona: config.persona.clone(),
+        persona: if config.compact_mode() { None } else { config.persona.clone() },
         summary: config.summary.clone(),
         kg_context: config.kg_context.clone(),
         tool_catalog: None,
