@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react'
 import { useStore } from '../../stores'
-import { parseContentParts, parseRole } from '../../stores/session'
+import { normalizeBackendMessages } from '../../stores/session'
 import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import AssistantMessage from '../chat/AssistantMessage'
@@ -83,62 +83,9 @@ export default function WriteChatPanel({
         const allMsgs = result.messages || []
         if (allMsgs.length === 0) return
 
-        // Merge tool_result content into the preceding assistant message
-        for (let i = 0; i < allMsgs.length; i++) {
-          const m = allMsgs[i]
-          const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
-          if (role === 'tool' && i > 0) {
-            let prev = i - 1
-            while (prev >= 0) {
-              const pr = typeof allMsgs[prev].role === 'string' ? allMsgs[prev].role.toLowerCase() : ''
-              if (pr === 'assistant') break
-              prev--
-            }
-            if (prev >= 0) {
-              const ac = allMsgs[prev].content
-              if (Array.isArray(ac)) {
-                const tp = Array.isArray(m.content) ? m.content : []
-                ac.push(...tp)
-              }
-            }
-          }
-        }
-
-        // Filter out tool messages and normalize — reuse the same parser as
-        // switchSession (session.ts) so tagged-enum ContentParts ({text:{text}},
-        // {tool_call:{...}}, tool_result pairing, image_ref, markdown) are
-        // handled identically. The WriteChatPanel-local simple map could not
-        // parse the tagged-enum format, producing empty blocks (root cause of
-        // the "inline shows nothing until openInChat" bug).
-        const rawMsgs = allMsgs
-          .filter((m: any) => typeof m.role === 'string' && m.role.toLowerCase() !== 'tool')
-          .map((m: any, i: number) => ({
-            id: `hist-${sessionId}-${i}`,
-            role: parseRole(m.role),
-            blocks: parseContentParts(m.content, sessionId, useStore.getState().port),
-            timestamp: m.timestamp || new Date().toISOString(),
-            usage: m.usage ? {
-              prompt: m.usage.prompt_tokens || 0,
-              completion: m.usage.completion_tokens || 0,
-              cached: m.usage.cached_tokens || 0,
-              cacheRead: m.usage.cache_read_tokens || 0,
-              cacheWrite: m.usage.cache_write_tokens || 0,
-              contextWindow: m.usage.context_window || 0,
-            } : undefined,
-          }))
-
-        // Merge consecutive assistant messages
-        const msgs = rawMsgs.reduce((acc: typeof rawMsgs, msg) => {
-          if (msg.role === 'assistant' && acc.length > 0 && acc[acc.length - 1].role === 'assistant') {
-            const prev = acc[acc.length - 1]
-            prev.blocks = [...prev.blocks, ...msg.blocks]
-            if (msg.usage) prev.usage = msg.usage
-            prev.timestamp = msg.timestamp
-            return acc
-          }
-          acc.push(msg)
-          return acc
-        }, [] as typeof rawMsgs)
+        // 与 switchSession 共用同一份规整逻辑（tool_result 归并、tagged-enum
+        // ContentParts 解析、连续 assistant 合并），避免两处实现漂移。
+        const msgs = normalizeBackendMessages(allMsgs, sessionId, useStore.getState().port)
 
         if (!cancelled) {
           useStore.getState().hydrateMessages(sessionId, msgs)

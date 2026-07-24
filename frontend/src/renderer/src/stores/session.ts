@@ -120,76 +120,7 @@ export const createSessionSlice: StateCreator<SessionSlice> = (set, get) => ({
     try {
       const result = await loomRpc<{ messages: any[] }>('session.messages', { session_id: id })
       const allMsgs: any[] = result.messages || []
-
-      // Merge tool_result content into the preceding assistant message so
-      // parseContentParts can pair tool_call ↔ tool_result within one array.
-      // Tool results are inserted BEFORE the text block so the display order
-      // matches the streaming path: thinking → cards → text.
-      for (let i = 0; i < allMsgs.length; i++) {
-        const m = allMsgs[i]
-        const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
-        if (role === 'tool' && i > 0) {
-          // Find the preceding assistant message (skip over other tool msgs)
-          let prev = i - 1
-          while (prev >= 0) {
-            const pr = typeof allMsgs[prev].role === 'string' ? allMsgs[prev].role.toLowerCase() : ''
-            if (pr === 'assistant') break
-            prev--
-          }
-          if (prev >= 0) {
-            const assistantContent = allMsgs[prev].content
-            if (Array.isArray(assistantContent)) {
-              const toolParts = Array.isArray(m.content) ? m.content : []
-              // Find insertion point: right before the first text/image block,
-              // after all thinking/tool_call blocks. This keeps cards grouped
-              // above the prose reply, matching the streaming layout.
-              let insertAt = assistantContent.length
-              for (let j = 0; j < assistantContent.length; j++) {
-                const p = assistantContent[j]
-                if (p && typeof p === 'object' && ('text' in p || 'image' in p || 'image_ref' in p)) {
-                  insertAt = j
-                  break
-                }
-              }
-              assistantContent.splice(insertAt, 0, ...toolParts)
-            }
-          }
-        }
-      }
-
-      const rawMsgs = allMsgs
-        .filter((m: any) => {
-          const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
-          return role !== 'tool'
-        })
-        .map((m: any, i: number) => ({
-        id: `hist-${id}-${i}`,
-        role: parseRole(m.role),
-        blocks: parseContentParts(m.content, id, get().port),
-        timestamp: m.timestamp || new Date().toISOString(),
-        usage: m.usage ? {
-          prompt: m.usage.prompt_tokens || 0,
-          completion: m.usage.completion_tokens || 0,
-          model: m.usage.model || '',
-          cached: m.usage.cached_tokens || 0,
-          cacheRead: m.usage.cache_read_tokens || 0,
-          cacheWrite: m.usage.cache_write_tokens || 0,
-          contextWindow: m.usage.context_window || 0,
-        } : undefined,
-      }))
-
-      // Merge consecutive assistant messages into one.
-      const msgs = rawMsgs.reduce((acc: typeof rawMsgs, msg) => {
-        if (msg.role === 'assistant' && acc.length > 0 && acc[acc.length - 1].role === 'assistant') {
-          const prev = acc[acc.length - 1]
-          prev.blocks = [...prev.blocks, ...msg.blocks]
-          if (msg.usage) prev.usage = msg.usage
-          prev.timestamp = msg.timestamp
-          return acc
-        }
-        acc.push(msg)
-        return acc
-      }, [] as typeof rawMsgs)
+      const msgs = normalizeBackendMessages(allMsgs, id, (get() as any).port)
 
       ;(get() as any).hydrateMessages?.(id, msgs)
 
@@ -406,6 +337,86 @@ function parseProcessWaitOutput(text: string, pid: string): { stream: string; te
     if (t) lines.push({ stream: 'stdout', text: t })
   }
   return lines
+}
+
+/**
+ * 把后端 session.messages 的原始消息列表规整为前端消息模型：
+ *  1. tool_result 并入前一条 assistant（插在 text/image 之前，与流式布局一致）
+ *  2. 过滤 tool 角色消息并走 parseContentParts
+ *  3. 合并连续的 assistant 消息
+ * switchSession 与 WriteChatPanel 共用此函数，避免两份实现漂移（WriteChatPanel
+ * 曾用简易映射解析 tagged-enum ContentParts，导致块为空的 bug）。
+ */
+export function normalizeBackendMessages(allMsgs: any[], sessionId: string, port: number): any[] {
+  // Merge tool_result content into the preceding assistant message so
+  // parseContentParts can pair tool_call ↔ tool_result within one array.
+  // Tool results are inserted BEFORE the text block so the display order
+  // matches the streaming path: thinking → cards → text.
+  for (let i = 0; i < allMsgs.length; i++) {
+    const m = allMsgs[i]
+    const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
+    if (role === 'tool' && i > 0) {
+      // Find the preceding assistant message (skip over other tool msgs)
+      let prev = i - 1
+      while (prev >= 0) {
+        const pr = typeof allMsgs[prev].role === 'string' ? allMsgs[prev].role.toLowerCase() : ''
+        if (pr === 'assistant') break
+        prev--
+      }
+      if (prev >= 0) {
+        const assistantContent = allMsgs[prev].content
+        if (Array.isArray(assistantContent)) {
+          const toolParts = Array.isArray(m.content) ? m.content : []
+          // Find insertion point: right before the first text/image block,
+          // after all thinking/tool_call blocks. This keeps cards grouped
+          // above the prose reply, matching the streaming layout.
+          let insertAt = assistantContent.length
+          for (let j = 0; j < assistantContent.length; j++) {
+            const p = assistantContent[j]
+            if (p && typeof p === 'object' && ('text' in p || 'image' in p || 'image_ref' in p)) {
+              insertAt = j
+              break
+            }
+          }
+          assistantContent.splice(insertAt, 0, ...toolParts)
+        }
+      }
+    }
+  }
+
+  const rawMsgs = allMsgs
+    .filter((m: any) => {
+      const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
+      return role !== 'tool'
+    })
+    .map((m: any, i: number) => ({
+    id: `hist-${sessionId}-${i}`,
+    role: parseRole(m.role),
+    blocks: parseContentParts(m.content, sessionId, port),
+    timestamp: m.timestamp || new Date().toISOString(),
+    usage: m.usage ? {
+      prompt: m.usage.prompt_tokens || 0,
+      completion: m.usage.completion_tokens || 0,
+      model: m.usage.model || '',
+      cached: m.usage.cached_tokens || 0,
+      cacheRead: m.usage.cache_read_tokens || 0,
+      cacheWrite: m.usage.cache_write_tokens || 0,
+      contextWindow: m.usage.context_window || 0,
+    } : undefined,
+  }))
+
+  // Merge consecutive assistant messages into one.
+  return rawMsgs.reduce((acc: typeof rawMsgs, msg) => {
+    if (msg.role === 'assistant' && acc.length > 0 && acc[acc.length - 1].role === 'assistant') {
+      const prev = acc[acc.length - 1]
+      prev.blocks = [...prev.blocks, ...msg.blocks]
+      if (msg.usage) prev.usage = msg.usage
+      prev.timestamp = msg.timestamp
+      return acc
+    }
+    acc.push(msg)
+    return acc
+  }, [] as typeof rawMsgs)
 }
 
 /**
