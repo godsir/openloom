@@ -10,7 +10,7 @@ const packs: Record<Locale, TranslationMap> = {
   'en-US': enUS,
 }
 
-function resolve(key: string, locale: Locale, vars?: Record<string, string | number>): string {
+function resolve(key: string, locale: Locale, vars?: Record<string, string | number> | string): string {
   const pack = packs[locale]
   if (!pack) {
     console.error(`[i18n] PACK MISSING for locale "${locale}". Available locales:`, Object.keys(packs))
@@ -18,11 +18,14 @@ function resolve(key: string, locale: Locale, vars?: Record<string, string | num
   }
   const raw = pack[key]
   if (raw === undefined) {
+    // 第二参数为字符串时视为缺失键的兜底文案（代码库中既有的大量 t(key, '文案')
+    // 调用就是按这个直觉写的）。没有兜底才退回显示键名并告警。
+    if (typeof vars === 'string') return vars
     console.warn(`[i18n] missing key: "${key}" for locale "${locale}". Pack has ${Object.keys(pack).length} keys.`)
     return key
   }
   const text = typeof raw === 'function' ? raw({}) : raw
-  if (vars) {
+  if (vars && typeof vars !== 'string') {
     return text.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? `{${k}}`))
   }
   return text
@@ -31,7 +34,7 @@ function resolve(key: string, locale: Locale, vars?: Record<string, string | num
 interface LocaleCtx {
   locale: Locale
   setLocale: (l: Locale) => void
-  t: (key: string, vars?: Record<string, string | number>) => string
+  t: (key: string, vars?: Record<string, string | number> | string) => string
 }
 
 const Ctx = createContext<LocaleCtx>({
@@ -66,7 +69,7 @@ export function LocaleProvider({ children, initial, onChange }: {
   }, [onChange])
 
   const t = useCallback(
-    (key: string, vars?: Record<string, string | number>) => resolve(key, locale, vars),
+    (key: string, vars?: Record<string, string | number> | string) => resolve(key, locale, vars),
     [locale],
   )
 
@@ -85,7 +88,7 @@ export function useLocale() {
  * Standalone t() function for use outside React components (e.g. service files).
  * Reads locale from localStorage (synced by LocaleProvider on change).
  */
-export function t(key: string, vars?: Record<string, string | number>): string {
+export function t(key: string, vars?: Record<string, string | number> | string): string {
   let locale: Locale = 'zh-CN'
   try {
     const stored = localStorage.getItem('loom-locale')
