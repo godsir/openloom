@@ -33,8 +33,8 @@ export default function AboutTab({ wsState }: { wsState: string }) {
 
   useEffect(() => {
     let cancelled = false
-    window.loom.getAppVersion().then((v) => { if (!cancelled) setAppVersion(v) })
-    window.loom.getLoomDir().then((d) => { if (!cancelled) setDataDir(d) })
+    window.loom.getAppVersion().then((v: string) => { if (!cancelled) setAppVersion(v) })
+    window.loom.getLoomDir().then((d: string) => { if (!cancelled) setDataDir(d) })
     loomRpc<SystemHealth>('system.health')
       .then((data) => { if (!cancelled) setHealth(data) })
       .catch(() => { if (!cancelled) setHealthError(true) })

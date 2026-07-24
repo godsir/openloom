@@ -15,7 +15,7 @@ export default function SkillBlock({ block }: { block: ContentBlock }) {
 
   // Load default expand preference
   useEffect(() => {
-    window.loom.getPreference('skillExpandDefault', false).then(v => setExpanded(v))
+    window.loom.getPreference('skillExpandDefault', false).then((v: boolean) => setExpanded(v))
     const handler = (e: Event) => {
       const d = (e as CustomEvent).detail
       if (d?.key === 'skill_expand') setExpanded(d.val)

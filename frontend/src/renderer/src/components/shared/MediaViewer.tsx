@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { IconX } from '../../utils/icons'
+import { useLocale } from '../../i18n'
 
 interface MediaViewerProps { open: boolean; src: string; alt?: string; onClose: () => void }
 
 export default function MediaViewer({ open, src, alt, onClose }: MediaViewerProps) {
+  const { t } = useLocale()
   const [scale, setScale] = useState(1)
 
   useEffect(() => {

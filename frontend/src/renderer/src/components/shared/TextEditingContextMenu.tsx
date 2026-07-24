@@ -20,7 +20,7 @@ export default function TextEditingContextMenu() {
   const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
 
   useEffect(() => {
-    const unsub = window.loom.onContextMenu((p) => { setParams(p) })
+    const unsub = window.loom.onContextMenu((p: ContextMenuParams) => { setParams(p) })
     return unsub
   }, [])
 

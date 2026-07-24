@@ -2,6 +2,7 @@
 // Renders images and other block elements inline within the editor
 
 import { Decoration, WidgetType, EditorView } from '@codemirror/view';
+import type { Range } from '@codemirror/state';
 
 /**
  * Inline image widget — renders an <img> element inside the CodeMirror editor.
@@ -50,8 +51,8 @@ export function buildImageDecorations(
   lineText: string,
   lineFrom: number,
   _view: EditorView,
-): Decoration[] {
-  const decorations: Decoration[] = [];
+): Range<Decoration>[] {
+  const decorations: Range<Decoration>[] = [];
   const regex = /!\[([^\]]*)\]\(([^)]+)\)/g;
   let match: RegExpExecArray | null;
 

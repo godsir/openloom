@@ -14,7 +14,7 @@ export default function ThinkingBlock({ block }: { block: ContentBlock }) {
 
   // Load default expand preference
   useEffect(() => {
-    window.loom.getPreference('thinkingExpandDefault', false).then(v => setExpanded(v))
+    window.loom.getPreference('thinkingExpandDefault', false).then((v: boolean) => setExpanded(v))
     const handler = (e: Event) => {
       const d = (e as CustomEvent).detail
       if (d?.key === 'thinking_expand') setExpanded(d.val)

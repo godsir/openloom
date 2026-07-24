@@ -2,8 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { loomRpc } from '../../services/jsonrpc'
 import { rpc } from '../../services/rpc-toast'
 import { useStore } from '../../stores'
+import type { ModelCapabilities } from '../../types/bindings'
 import { IconEye, IconWrench, IconBrain, IconX, IconSearch } from '../../utils/icons'
 import Select from './Select'
+
+/** model.discover 返回的发现模型条目（后端可能附带能力标记） */
+type DiscoveredModel = { id: string; context_length?: number; capabilities?: ModelCapabilities }
 import { useLocale } from '../../i18n'
 import type { ModelConfig, ModelListItem, ModelBackend } from '../../types/bindings'
 import styles from './ModelConfig.module.css'
@@ -120,7 +124,7 @@ export default function ModelConfigPanel() {
   const [urlSaveStatus, setUrlSaveStatus] = useState<'idle' | 'saving' | 'ok' | 'fail'>('idle')
 
   // Discovered
-  const [discovered, setDiscovered] = useState<Array<{ id: string; context_length?: number }>>([])
+  const [discovered, setDiscovered] = useState<DiscoveredModel[]>([])
   const [discovering, setDiscovering] = useState(false)
 
   // Model search
@@ -288,7 +292,7 @@ export default function ModelConfigPanel() {
     if (!selected) return
     setDiscovering(true)
     try {
-      const result = await loomRpc<{ models: Array<{ id: string; context_length?: number }> }>('model.discover', {
+      const result = await loomRpc<{ models: DiscoveredModel[] }>('model.discover', {
         backend: selected.backend,
         base_url: normalizeBaseUrl(baseUrl, apiFormat),
         api_format: apiFormat,
@@ -306,7 +310,7 @@ export default function ModelConfigPanel() {
     }
   }
 
-  const handleAddModel = async (model: { id: string; context_length?: number }) => {
+  const handleAddModel = async (model: DiscoveredModel) => {
     if (!selected) return
     const modelId = model.id
     const name = modelId.split('/').pop() || modelId

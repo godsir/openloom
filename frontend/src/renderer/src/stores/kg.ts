@@ -110,7 +110,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
     if (!prev) {
       const center: KgNode = (get().kgSearchResults.find(n => n.name === nodeName))
         ?? get().kgNodeList.find(n => n.name === nodeName)
-        ?? { node_id: 0, name: nodeName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global' }
+        ?? { node_id: 0, name: nodeName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global', layer: 'episodic' }
       if (generation === kgGraphGeneration) {
         set({ kgGraph: { nodes: [center, ...graph.nodes], edges: graph.edges } })
       }
@@ -148,7 +148,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
       if (generation === kgGraphGeneration) {
         set({
           kgGraph: {
-            nodes: startNode ? [startNode] : [{ node_id: 0, name: startName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global' }],
+            nodes: startNode ? [startNode] : [{ node_id: 0, name: startName, entity_type: 'Unknown', description: '', confidence: 1.0, scope: 'global', layer: 'episodic' }],
             edges: [],
           },
           kgSelectedNode: null,
@@ -281,7 +281,7 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
       // ── Galaxies form around USER's 1-hop neighbours ──────────────
       // USER + its direct edges → galaxy 0 (central cluster)
       addNode({ node_id: 0, name: 'USER', entity_type: 'Person', description: '', confidence: 1.0, scope: 'global' } as KgNode, 0)
-      addResult(userResult, 0)
+      if (userResult) addResult(userResult, 0)
 
       // Walk each galaxy centre (up to 6) in parallel
       const centers = galaxyCenters.slice(0, 6)

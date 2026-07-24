@@ -108,7 +108,7 @@ function mermaidPlugin(md: MarkdownIt) {
     // Extract file path from fence info (e.g. "typescript /path/to/file.ts" or "python D:\code\file.py")
     const fpMatch = info.match(FILE_PATH_RE)
     const filePath = fpMatch ? fpMatch[1] : ''
-    const lang = filePath ? info.replace(fpMatch[0], '').trim() : info
+    const lang = fpMatch ? info.replace(fpMatch[0], '').trim() : info
     const code = token.content
     const dataAttrs = filePath
       ? ` data-file-path="${md.utils.escapeHtml(filePath)}"`

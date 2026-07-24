@@ -13,7 +13,7 @@ export function useAnimatePresence(
   const [state, setState] = useState<'enter' | 'idle' | 'exit' | 'hidden'>(
     visible ? 'enter' : 'hidden',
   )
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
     if (visible) {

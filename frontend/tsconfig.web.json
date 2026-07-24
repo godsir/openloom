@@ -8,7 +8,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "./out",
-    "paths": { "@/*": ["./src/renderer/src/*"] }
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/renderer/src/*"],
+      "@asset/*": ["./src/asset/*"]
+    }
   },
   "include": ["src/renderer/src/**/*"]
 }

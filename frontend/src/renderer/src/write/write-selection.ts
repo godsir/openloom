@@ -10,8 +10,9 @@ export function createSelectionState(
   lineTo: number,
   blockType: string | null = null,
   containsImage: boolean = false,
+  source: WriteEditorSelectionState['source'] = 'markdown',
 ): WriteEditorSelectionState {
-  return { text, from, to, lineFrom, lineTo, blockType, containsImage };
+  return { source, text, from, to, lineFrom, lineTo, blockType, containsImage };
 }
 
 export function writeSelectionStatesEqual(

@@ -4,7 +4,7 @@ import type { Toast } from '../../stores/toast'
 import { IconCheck, IconAlertCircle, IconXCircle, IconX } from '../../utils/icons'
 import styles from './ToastContainer.module.css'
 
-const TYPE_ICONS: Record<string, (size?: number) => JSX.Element> = {
+const TYPE_ICONS: Record<string, (size?: number) => import('react').JSX.Element> = {
   info: (size) => <svg width={size ?? 16} height={size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>,
   success: (size) => <IconCheck size={size ?? 16} />,
   warning: (size) => <IconAlertCircle size={size ?? 16} />,

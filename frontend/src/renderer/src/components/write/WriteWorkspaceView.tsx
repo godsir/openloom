@@ -35,7 +35,7 @@ export const WriteWorkspaceView: React.FC = () => {
 
   // ── Non-state refs ──
   const fileContentRef = useRef(fileContent); fileContentRef.current = fileContent
-  const pendingSessions = useRef<Record<string, Promise<string>>>({})
+  const pendingSessions = useRef<Record<string, Promise<string> | undefined>>({})
   const [assistantWindow, setAssistantWindow] = useState<Window | null>(null)
 
   // ── Quick suggestions ──
@@ -53,7 +53,7 @@ export const WriteWorkspaceView: React.FC = () => {
     try {
       const p = await (window as any).loom?.selectFolder?.()
       if (p && p !== workspaceRoot && await guardWriteNavigation()) setWorkspaceRoot(p)
-    } catch {}
+    } catch (e) { console.warn('[write] selectFolder failed:', e) }
   }, [workspaceRoot, setWorkspaceRoot])
 
   const handleNewFile = useCallback(() => setModalState('newFile'), [setModalState])
@@ -75,7 +75,7 @@ export const WriteWorkspaceView: React.FC = () => {
     if (pendingSessions.current[threadKey]) return pendingSessions.current[threadKey]
     const p = (async () => {
       const sid = await createSession()
-      try { await loomRpc('session.rename', { session_id: sid, title: '[写] ' + (filePath.split('/').pop() || filePath) }) } catch {}
+      try { await loomRpc('session.rename', { session_id: sid, title: '[写] ' + (filePath.split('/').pop() || filePath) }) } catch (e) { console.warn('[write] session.rename failed:', e) }
       const agentName = writingAgentName || 'default'
       await loomRpc('session.bind_agent', { session_id: sid, agent_config_name: agentName })
       useStore.getState().setSessionAgentBinding(sid, agentName)

@@ -1,5 +1,5 @@
 import { siWechat, siTelegram } from 'simple-icons'
-import type { Platform } from '../stores/im'
+import type { Platform } from '../../stores/im'
 import { MessageSquare as IconMessageSquare } from 'lucide-react'
 
 // 本地资产图片路径（构建时会由 Vite 处理）

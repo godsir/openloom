@@ -1,7 +1,7 @@
 {
   "name": "openloom-desktop",
   "version": "0.4.33",
-  "description": "openLoom — local-first private AI assistant",
+  "description": "openLoom 鈥?local-first private AI assistant",
   "author": "openLoom Contributors",
   "main": "./out/main/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "preview": "electron-vite preview",
     "package": "node scripts/package.js",
     "package:updater": "node scripts/package.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json",
     "test": "vitest",
     "test:e2e": "playwright test"
   },
@@ -58,6 +58,7 @@
     "@tailwindcss/vite": "^4.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/diff": "^7.0.2",
+    "@types/markdown-it": "^14.1.2",
     "@vitejs/plugin-react": "^4.0.0",
     "electron": "^38.0.0",
     "electron-builder": "^26.0.0",

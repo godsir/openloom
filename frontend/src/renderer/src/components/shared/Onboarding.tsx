@@ -148,7 +148,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
   }
 
   const handleSetTheme = (t: string) => {
-    setSelTheme(t)
+    setSelTheme(t as Parameters<typeof setSelTheme>[0])
     setTheme(t as any)
   }
 

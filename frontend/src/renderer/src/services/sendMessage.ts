@@ -37,16 +37,17 @@ async function detectAndPromptCron(sessionId: string, content: string): Promise<
   try {
     // Race the detection RPC against a 4-second timeout.
     // If it takes longer than 4s, proceed with normal AI send.
-    const result = await Promise.race([
-      loomRpc<{
-        should_create: boolean
-        name?: string
-        prompt?: string
-        cron_expression?: string
-        kind?: string
-        confirmation?: string
-      }>('cron.detect', { message: content }),
-      new Promise<{ should_create: boolean }>((resolve) =>
+    interface CronDetectResult {
+      should_create: boolean
+      name?: string
+      prompt?: string
+      cron_expression?: string
+      kind?: string
+      confirmation?: string
+    }
+    const result = await Promise.race<CronDetectResult>([
+      loomRpc<CronDetectResult>('cron.detect', { message: content }),
+      new Promise<CronDetectResult>((resolve) =>
         setTimeout(() => resolve({ should_create: false }), 4000)
       ),
     ])

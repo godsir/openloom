@@ -115,7 +115,7 @@ export default function ProcessOutputBlock({ block }: { block: ContentBlock }) {
   }, [parsedLines])
 
   useEffect(() => {
-    window.loom.getPreference('toolExpandDefault', true).then(v => setExpanded(v))
+    window.loom.getPreference('toolExpandDefault', true).then((v: boolean) => setExpanded(v))
     const handler = (e: Event) => {
       const d = (e as CustomEvent).detail
       if (d?.key === 'tool_expand') setExpanded(d.val)

@@ -51,7 +51,7 @@ function splitDiffByFile(diff: string): Record<string, string> {
   return result
 }
 
-const SEV_ICON: Record<string, (s: number) => JSX.Element> = { critical: (s) => <IconAlertTriangle size={s} />, important: (s) => <IconAlertCircle size={s} />, minor: (s) => <IconInfo size={s} /> }
+const SEV_ICON: Record<string, (s: number) => import('react').JSX.Element> = { critical: (s) => <IconAlertTriangle size={s} />, important: (s) => <IconAlertCircle size={s} />, minor: (s) => <IconInfo size={s} /> }
 
 // Build colorized diff HTML (rendered via dangerouslySetInnerHTML).
 // All user content is HTML-escaped before color spans are applied.

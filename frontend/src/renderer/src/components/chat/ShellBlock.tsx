@@ -130,7 +130,7 @@ export default function ShellBlock({ block }: { block: ContentBlock }) {
 
   // Load default expand preference
   useEffect(() => {
-    window.loom.getPreference('toolExpandDefault', true).then(v => setExpanded(v))
+    window.loom.getPreference('toolExpandDefault', true).then((v: boolean) => setExpanded(v))
     const handler = (e: Event) => {
       const d = (e as CustomEvent).detail
       if (d?.key === 'tool_expand') setExpanded(d.val)

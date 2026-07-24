@@ -134,7 +134,7 @@ export default function DynamicIslandCenter() {
     const unsub = (window as any).loom?.onIMChannelStatus?.((status: any) => {
       const key = `${status.platform}:${status.instanceId}`
       const prev = prevImConnectedRef.current[key]
-      const label = PLATFORM_LABELS[status.platform] ?? status.platform
+      const label = PLATFORM_LABELS[status.platform as keyof typeof PLATFORM_LABELS] ?? status.platform
       if (status.connected && prev !== true) {
         useStore.getState().showIslandTransient(t('island.imConnected', { platform: label }), 3000)
       } else if (!status.connected && prev === true) {

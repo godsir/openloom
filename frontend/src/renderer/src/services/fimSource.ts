@@ -48,6 +48,7 @@ export function buildFimCompletionSource() {
 
     // Skip if not explicit and prefix is too short
     const view = context.view
+    if (!view) return null
     const pos = context.pos
     const doc = view.state.doc.toString()
     const prefix = doc.slice(Math.max(0, pos - 8_000), pos)

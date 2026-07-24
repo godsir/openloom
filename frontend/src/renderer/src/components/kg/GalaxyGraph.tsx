@@ -3,6 +3,7 @@ import { useLocale } from '../../i18n'
 
 interface GraphNode {
   id: string
+  node_id: number
   name: string
   entity_type: string
   description: string
@@ -29,7 +30,7 @@ interface Position {
 }
 
 interface GalaxyGraphProps {
-  nodes: { name: string; original_name?: string; entity_type: string; description: string; confidence: number; scope: string }[]
+  nodes: { name: string; node_id: number; original_name?: string; entity_type: string; description: string; confidence: number; scope: string }[]
   edges: { source: string; target: string; relation_type: string; confidence: number }[]
   showNodeLabels: boolean
   showRelationLabels: boolean
@@ -1049,6 +1050,7 @@ export default function GalaxyGraph({ nodes, edges, showNodeLabels, showRelation
         if (nodeData) {
           onNodeClick({
             id: nodeData.name,
+            node_id: nodeData.node_id,
             name: nodeData.original_name || nodeData.name,
             entity_type: nodeData.entity_type,
             description: nodeData.description,

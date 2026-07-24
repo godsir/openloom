@@ -42,7 +42,7 @@ export default function App() {
 
   // Set platform attribute for CSS targeting (Win11 animation fix)
   useEffect(() => {
-    window.loom.getPlatform().then(platform => {
+    window.loom.getPlatform().then((platform: string) => {
       document.documentElement.setAttribute('data-platform', platform)
     })
   }, [])
@@ -133,7 +133,7 @@ export default function App() {
     disposers.push(window.loom.onUpdateNotAvailable(() => {
       useStore.getState().onAutoUpdateNotAvailable()
     }))
-    disposers.push(window.loom.onUpdateDownloadProgress((p) => {
+    disposers.push(window.loom.onUpdateDownloadProgress((p: any) => {
       useStore.getState().onAutoDownloadProgress(p)
     }))
     disposers.push(window.loom.onUpdateDownloaded(() => {
@@ -147,7 +147,7 @@ export default function App() {
     }))
 
     // Listen for engine state changes from main process
-    disposers.push(window.loom.onEngineStateChanged((payload) => {
+    disposers.push(window.loom.onEngineStateChanged((payload: { state: string; port?: number }) => {
       useStore.getState().setEngineState(payload.state as 'running' | 'stopped' | 'starting')
       if (payload.state === 'running' && payload.port != null) {
         useStore.getState().setPort(payload.port)
