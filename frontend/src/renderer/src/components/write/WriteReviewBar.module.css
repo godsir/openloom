@@ -1,0 +1,114 @@
+/* ── AI inline 编辑审查栏（挂在 WriteInlineAgent 工具栏下方） ── */
+
+.reviewWrap {
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  min-height: 30px;
+}
+
+.title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.stats {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
+
+.statDel {
+  color: var(--text-error);
+}
+
+.statAdd {
+  color: var(--text-success, #4caf50);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+  height: 24px;
+  font-family: inherit;
+}
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-accent);
+}
+
+.acceptBtn {
+  composes: btn;
+  border-color: var(--border-accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.acceptBtn:hover:not(:disabled) {
+  background: var(--accent-subtle);
+}
+
+.rejectBtn {
+  composes: btn;
+  color: var(--text-secondary);
+}
+.rejectBtn:hover:not(:disabled) {
+  color: var(--text-error);
+  border-color: var(--text-error);
+}
+
+/* ── diff 预览面板 ── */
+
+.diffPanel {
+  max-height: 240px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+}
+
+.diffText {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.diffAdd {
+  background: var(--diff-add-bg, rgba(76, 175, 80, 0.18));
+  color: var(--text);
+  border-radius: 2px;
+}
+
+.diffDel {
+  background: var(--diff-del-bg, rgba(244, 67, 54, 0.15));
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  border-radius: 2px;
+}

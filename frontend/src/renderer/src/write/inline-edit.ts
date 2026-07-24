@@ -48,7 +48,7 @@ export function resolveEditScope(
   selection: WriteEditorSelectionState,
   granularity: 'selection' | 'paragraph' | 'line' = 'selection',
 ): WriteInlineEditScope {
-  const { from, to, text, lineFrom, lineTo } = selection;
+  const { from, to, lineFrom, lineTo } = selection;
 
   let scopeFrom = from;
   let scopeTo = to;
@@ -129,19 +129,23 @@ export function buildInlineEditPrompt(request: WriteInlineEditRequest): string {
 export function parseInlineEditResponse(response: string): string | null {
   const editMatch = response.match(/<<<EDIT\s*([\s\S]*?)\s*<<<\/EDIT/);
   if (editMatch) {
-    return editMatch[1].trim();
+    // 空 EDIT 块视为解析失败——否则会把选区静默替换为空字符串（误删内容）
+    const text = editMatch[1].trim();
+    return text.length > 0 ? text : null;
   }
 
   // Fallback: try SHORT marker
   const shortMatch = response.match(/<<<SHORT\s*([\s\S]*?)\s*<<<\/SHORT/);
   if (shortMatch) {
-    return shortMatch[1].trim();
+    const text = shortMatch[1].trim();
+    return text.length > 0 ? text : null;
   }
 
   // Fallback: try LONG marker
   const longMatch = response.match(/<<<LONG\s*([\s\S]*?)\s*<<<\/LONG/);
   if (longMatch) {
-    return longMatch[1].trim();
+    const text = longMatch[1].trim();
+    return text.length > 0 ? text : null;
   }
 
   // Last resort: return the raw response if it looks like plain text
@@ -183,7 +187,7 @@ export interface SimpleDiffChunk {
 }
 
 export function buildDiffChunks(
-  content: string,
+  _content: string,
   scope: WriteInlineEditScope,
   replacement: string,
 ): SimpleDiffChunk[] {

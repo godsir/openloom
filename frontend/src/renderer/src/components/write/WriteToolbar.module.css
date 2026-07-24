@@ -125,6 +125,14 @@
   color: var(--red);
 }
 
+/* ── 字数统计 ── */
+.wordCount {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 2px;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }

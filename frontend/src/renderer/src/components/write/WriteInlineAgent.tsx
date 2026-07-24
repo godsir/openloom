@@ -2,17 +2,20 @@
 // Provides: block type switching, inline formatting, quick actions, quote to assistant
 // AI input lives in WriteAssistantPanel (right side) — not duplicated here.
 
-import React from 'react';
-import { useWriteStore, WriteBlockType } from '../../stores/write';
-import { detectBlockType, applyBlockType } from '../../write/block-type';
+import React, { useState } from 'react';
+import { useWriteStore } from '../../stores/write';
+import { detectBlockType, applyBlockType, type WriteBlockType } from '../../write/block-type';
 import { toggleInlineFormat, hasInlineFormat, InlineFormatKind } from '../../write/inline-format';
 import { DEFAULT_QUICK_ACTIONS } from '../../write/quick-actions';
 import { createQuotedSelection } from '../../write/quoted-selection';
+import { requestInlineEdit } from '../../write/inline-edit-service';
+import { WriteReviewBar } from './WriteReviewBar';
+import { useLocale } from '../../i18n';
 import {
   IconHeading1, IconHeading2, IconHeading3,
   IconPilcrow, IconQuote, IconList, IconListOrdered, IconCode2,
   IconBold, IconItalic, IconStrikethrough,
-  IconMessageSquare,
+  IconMessageSquare, IconRotateCcw, IconRotateCw,
 } from '../../utils/icons';
 import styles from './WriteInlineAgent.module.css';
 import type { RichEditorActiveState } from '../../write/tiptap/WriteRichEditor';
@@ -24,6 +27,8 @@ interface WriteInlineAgentProps {
   onRichBlockType?: (type: WriteBlockType) => void;
   onRichInlineFormat?: (kind: InlineFormatKind) => void;
   getRichActiveState?: () => RichEditorActiveState | undefined;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 interface BlockTypeDef {
@@ -65,11 +70,16 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
   onRichBlockType,
   onRichInlineFormat,
   getRichActiveState,
+  onUndo,
+  onRedo,
 }) => {
+  const { t } = useLocale();
   const selection = useWriteStore((s) => s.selection);
   const setSelection = useWriteStore((s) => s.setSelection);
   const addQuotedSelection = useWriteStore((s) => s.addQuotedSelection);
   const activeFilePath = useWriteStore((s) => s.activeFilePath);
+  // 进行中的 inline 编辑请求（action id），防止并发触发
+  const [inlineBusy, setInlineBusy] = useState<string | null>(null);
 
   const hasSelection = selection !== null;
   const richState = selection?.source === 'rich' ? getRichActiveState?.() : undefined;
@@ -103,16 +113,37 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
     setSelection(null);
   };
 
-  const handleQuickAction = (actionId: string) => {
+  const handleQuickAction = async (actionId: string) => {
     const action = DEFAULT_QUICK_ACTIONS.find((a) => a.id === actionId);
     if (!action) return;
     const context = selection ? `\n\n${selection.text}` : '';
     if (action.mode === 'chat') {
       onSendToAssistant(`${action.prompt}${context}`);
-    } else {
-      onSendToAssistant(`${action.prompt}\n\n"${context.trim()}"`);
+      setSelection(null);
+      return;
     }
-    setSelection(null);
+    // inline 模式：AI 直接改写选区，结果进入审查栏（不直接落地）。
+    if (!selection) return;
+    // TipTap 的选区坐标是 ProseMirror 位置，与 markdown 文本偏移不兼容——
+    // rich 模式下回退到聊天路径（行为与改动前一致）。
+    if (selection.source === 'rich') {
+      onSendToAssistant(`${action.prompt}\n\n"${context.trim()}"`);
+      setSelection(null);
+      return;
+    }
+    if (inlineBusy) return;
+    setInlineBusy(actionId);
+    try {
+      const result = await requestInlineEdit(action.prompt);
+      if (!result.ok) {
+        useWriteStore.getState().showToast(
+          'error',
+          result.message || t('write.inlineEditFailed'),
+        );
+      }
+    } finally {
+      setInlineBusy(null);
+    }
   };
 
   const handleQuoteToAssistant = () => {
@@ -126,6 +157,27 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
     <div className={styles.toolbar}>
       {/* Block types | Inline formats | Quick actions */}
       <div className={styles.row}>
+        <div className={styles.section}>
+          <button
+            className={styles.iconBtn}
+            onClick={onUndo}
+            title="撤销 (Ctrl+Z)"
+            disabled={!onUndo}
+          >
+            <IconRotateCcw size={14} />
+          </button>
+          <button
+            className={styles.iconBtn}
+            onClick={onRedo}
+            title="重做 (Ctrl+Shift+Z)"
+            disabled={!onRedo}
+          >
+            <IconRotateCw size={14} />
+          </button>
+        </div>
+
+        <span className={styles.divider} />
+
         <div className={styles.section}>
           {BLOCK_TYPES.map((bt) => {
             const currentType = selection?.source === 'rich'
@@ -177,10 +229,16 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
               key={qa.id}
               className={styles.quickBtn}
               onClick={() => handleQuickAction(qa.id)}
-              disabled={!hasSelection}
-              title={hasSelection ? undefined : '请先选中文本'}
+              disabled={!hasSelection || inlineBusy !== null}
+              title={
+                !hasSelection
+                  ? '请先选中文本'
+                  : qa.mode === 'inline'
+                    ? 'AI 直接改写选区，结果需确认后落地'
+                    : '发送到右侧助手处理'
+              }
             >
-              {qa.label}
+              {inlineBusy === qa.id ? '…' : qa.label}
             </button>
           ))}
           <button
@@ -194,6 +252,8 @@ export const WriteInlineAgent: React.FC<WriteInlineAgentProps> = ({
           </button>
         </div>
       </div>
+      {/* AI inline 编辑的审查栏（有待确认修改时可见） */}
+      <WriteReviewBar />
     </div>
   );
 };

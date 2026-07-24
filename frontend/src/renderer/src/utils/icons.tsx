@@ -49,6 +49,8 @@ export {
   FileText as IconFileText,
   Lightbulb as IconLightbulb,
   RotateCcw as IconRotateCcw,
+  RotateCw as IconRotateCw,
+  ChevronLeft as IconChevronLeft,
   BookOpen as IconBookOpen,
   Sparkles as IconSparkles,
   Terminal as IconTerminal,

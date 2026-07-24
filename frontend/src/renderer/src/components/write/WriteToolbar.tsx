@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { useWriteStore } from '../../stores/write'
 import WritePreviewModeSelector from './WritePreviewModeSelector'
 import WriteFontSizeControl from './WriteFontSizeControl'
@@ -21,8 +21,20 @@ interface WriteToolbarProps {
 export default function WriteToolbar({ onNewFile, onSave, onToggleAssistant }: WriteToolbarProps) {
   const saveStatus = useWriteStore((s) => s.saveStatus)
   const activeFilePath = useWriteStore((s) => s.activeFilePath)
+  const activeFileKind = useWriteStore((s) => s.activeFileKind)
   const assistantOpen = useWriteStore((s) => s.assistantOpen)
   const fileTruncated = useWriteStore((s) => s.fileTruncated)
+  const fileContent = useWriteStore((s) => s.fileContent)
+
+  // 字数统计：CJK 字符按字计，其余按词计（写作场景惯例）
+  const wordCount = useMemo(() => {
+    if (!activeFilePath || activeFileKind !== 'text') return null
+    const cjk = (fileContent.match(/[一-鿿㐀-䶿　-〿＀-￯]/g) || []).length
+    const words = (fileContent
+      .replace(/[一-鿿㐀-䶿　-〿＀-￯]/g, ' ')
+      .match(/[A-Za-z0-9_'-]+/g) || []).length
+    return cjk + words
+  }, [fileContent, activeFilePath, activeFileKind])
 
   const statusLabel = SAVE_STATUS_LABELS[saveStatus] || saveStatus
   const statusClass =
@@ -63,6 +75,9 @@ export default function WriteToolbar({ onNewFile, onSave, onToggleAssistant }: W
         </button>
 
         <span className={statusClass}>{statusLabel}</span>
+        {wordCount !== null && (
+          <span className={styles.wordCount}>{wordCount.toLocaleString()} 字</span>
+        )}
       </div>
 
       {/* ── Center: Preview Mode | Font Size | Export ── */}

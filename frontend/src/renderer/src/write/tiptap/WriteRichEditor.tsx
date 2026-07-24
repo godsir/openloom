@@ -30,6 +30,8 @@ export interface WriteRichEditorHandle {
   applyBlock: (type: WriteBlockType) => boolean;
   toggleInline: (kind: InlineFormatKind) => boolean;
   getActiveState: () => RichEditorActiveState;
+  undo: () => boolean;
+  redo: () => boolean;
 }
 
 export const WriteRichEditor = forwardRef<WriteRichEditorHandle, WriteRichEditorProps>(function WriteRichEditor({
@@ -162,6 +164,8 @@ export const WriteRichEditor = forwardRef<WriteRichEditorHandle, WriteRichEditor
         code: editor.isActive('code'),
       };
     },
+    undo: () => editor?.chain().focus().undo().run() ?? false,
+    redo: () => editor?.chain().focus().redo().run() ?? false,
   }), [editor]);
 
   // Sync external value changes (e.g., file open, AI apply-edit, mode switch).

@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react'
 import { useWriteStore, WritePreviewMode } from '../../stores/write'
-import { WriteMarkdownEditor } from './WriteMarkdownEditor'
+import { WriteMarkdownEditor, type WriteMarkdownEditorHandle } from './WriteMarkdownEditor'
 import { WriteMarkdownPreview } from './WriteMarkdownPreview'
 import { WriteImagePreview } from './WriteImagePreview'
 import { WriteWorkspaceStart } from './WriteWorkspaceStart'
@@ -77,6 +77,7 @@ function resolvePreviewMode(previewMode: WritePreviewMode, fileSize: number): Wr
 
 export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWorkspace, onSendToAssistant }) => {
   const richEditorRef = useRef<WriteRichEditorHandle>(null)
+  const mdEditorRef = useRef<WriteMarkdownEditorHandle>(null)
   const activeFilePath = useWriteStore(s => s.activeFilePath)
   const activeFileKind = useWriteStore(s => s.activeFileKind)
   const fileContent = useWriteStore(s => s.fileContent)
@@ -110,6 +111,16 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
     setFileContent(newContent)
     setSaveStatus('dirty')
   }, [renderSafety.readOnly, setFileContent, setSaveStatus])
+
+  // 撤销/重做：rich 与 markdown 编辑器同时只挂载一个，谁在用谁响应
+  const handleUndo = useCallback(() => {
+    if (richEditorRef.current?.undo()) return
+    mdEditorRef.current?.undo()
+  }, [])
+  const handleRedo = useCallback(() => {
+    if (richEditorRef.current?.redo()) return
+    mdEditorRef.current?.redo()
+  }, [])
 
   if (!activeFilePath) {
     return <WriteWorkspaceStart onSelectWorkspace={onSelectWorkspace} />
@@ -153,6 +164,8 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
           onRichBlockType={(type) => { richEditorRef.current?.applyBlock(type) }}
           onRichInlineFormat={(kind) => { richEditorRef.current?.toggleInline(kind) }}
           getRichActiveState={() => richEditorRef.current?.getActiveState()}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
         />
         <WriteRichEditor ref={richEditorRef} value={fileContent} onChange={handleChange} fontSize={fontSize} />
       </div>
@@ -162,8 +175,8 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
   if (effectiveMode === 'live') {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
-        <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode="live" />
+        <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} onUndo={handleUndo} onRedo={handleRedo} />
+        <WriteMarkdownEditor ref={mdEditorRef} value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode="live" />
       </div>
     )
   }
@@ -176,9 +189,9 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
     return <SplitView
       left={
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />
+          <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} onUndo={handleUndo} onRedo={handleRedo} />
           <div style={{ flex: 1, minHeight: 0 }}>
-            <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} />
+            <WriteMarkdownEditor ref={mdEditorRef} value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} />
           </div>
         </div>
       }
@@ -193,8 +206,8 @@ export const WriteDocumentPane: React.FC<WriteDocumentPaneProps> = ({ onSelectWo
           文件仅加载了部分内容，为防止覆盖原文件，当前已设为只读。
         </div>
       )}
-      {!renderSafety.readOnly && <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} />}
-      <WriteMarkdownEditor value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} readOnly={renderSafety.readOnly} />
+      {!renderSafety.readOnly && <WriteInlineAgent editorValue={fileContent} onApplyEdit={handleApplyEdit} onSendToAssistant={onSendToAssistant} onUndo={handleUndo} onRedo={handleRedo} />}
+      <WriteMarkdownEditor ref={mdEditorRef} value={fileContent} onChange={handleChange} fontSize={fontSize} previewMode={effectiveMode} readOnly={renderSafety.readOnly} />
     </div>
   )
 }

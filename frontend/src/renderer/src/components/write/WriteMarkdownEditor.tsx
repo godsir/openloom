@@ -1,10 +1,10 @@
 // frontend/src/renderer/src/components/write/WriteMarkdownEditor.tsx
 // 基于 CodeMirrorEditor 重构，适配 useWriteStore（替代主 store 的 fimEnabled）
-import React, { useRef, useEffect } from 'react'
+import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, placeholder as cmPlaceholder } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo as cmUndo, redo as cmRedo } from '@codemirror/commands'
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { closeBrackets } from '@codemirror/autocomplete'
 import { useWriteStore } from '../../stores/write'
@@ -23,6 +23,11 @@ interface WriteMarkdownEditorProps {
   readOnly?: boolean
 }
 
+export interface WriteMarkdownEditorHandle {
+  undo: () => boolean
+  redo: () => boolean
+}
+
 /**
  * Full-height CodeMirror 6 editor for write mode.
  * Features: markdown syntax highlighting, line numbers, FIM autocompletion,
@@ -33,16 +38,21 @@ interface WriteMarkdownEditorProps {
  * - FIM 开关同时检查 write store 和主 store 的 fimEnabled
  * - 预留给 Live 装饰模式的扩展点
  */
-export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
+export const WriteMarkdownEditor = forwardRef<WriteMarkdownEditorHandle, WriteMarkdownEditorProps>(({
   value,
   onChange,
   placeholder = '',
   fontSize = 14,
   previewMode,
   readOnly = false,
-}) => {
+}, ref) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+
+  useImperativeHandle(ref, () => ({
+    undo: () => (viewRef.current ? cmUndo(viewRef.current) : false),
+    redo: () => (viewRef.current ? cmRedo(viewRef.current) : false),
+  }), [])
 
   // Compartments for dynamic reconfiguration — preserves undo history, cursor, scroll
   const fimCompartment = useRef(new Compartment())
@@ -255,4 +265,4 @@ export const WriteMarkdownEditor: React.FC<WriteMarkdownEditorProps> = ({
       }}
     />
   )
-}
+})

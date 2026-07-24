@@ -207,7 +207,14 @@ const createWriteFilesSlice = (set: any, _get: any): WriteFilesSlice => ({
     set((s: any) => ({
       expandedDirs: { ...s.expandedDirs, [dirPath]: !s.expandedDirs[dirPath] },
     })),
-  setActiveFile: (path, kind) => set({ activeFilePath: path, activeFileKind: kind, fileError: null }),
+  setActiveFile: (path, kind) => set({
+    activeFilePath: path,
+    activeFileKind: kind,
+    fileError: null,
+    // 切换文件时丢弃待审查的 AI 改写——偏移只对原文件有效
+    pendingAgentReview: null,
+    reviewActive: false,
+  }),
   setFileContent: (content) => set({ fileContent: content }),
   setSaveStatus: (saveStatus) => set({ saveStatus }),
   setFileLoading: (fileLoading) => set({ fileLoading }),
@@ -237,6 +244,8 @@ const createWriteFilesSlice = (set: any, _get: any): WriteFilesSlice => ({
       fileError: null,
       fileSize: 0,
       fileTruncated: false,
+      pendingAgentReview: null,
+      reviewActive: false,
     }),
   triggerRefresh: () => set((s: any) => ({ refreshTrigger: s.refreshTrigger + 1 })),
 });
