@@ -11,6 +11,7 @@ interface Props {
   messageId: string
   role: 'user' | 'assistant'
   timestamp: string
+  sessionId?: string | null
   usage?: { prompt: number; completion: number }
   blocks?: ContentBlock[]
 }
@@ -20,11 +21,12 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-export default function MessageFooterActions({ messageId, role, timestamp, usage, blocks = [] }: Props) {
+export default function MessageFooterActions({ messageId, role, timestamp, sessionId, usage, blocks = [] }: Props) {
   const { t } = useLocale()
   const deleteMessage = useStore((s) => s.deleteMessage)
   const currentSessionId = useStore((s) => s.currentSessionId)
-  const streaming = useStore((s) => currentSessionId ? s.streamingSessionIds.has(currentSessionId) : false)
+  const effectiveSessionId = sessionId || currentSessionId
+  const streaming = useStore((s) => effectiveSessionId ? s.streamingSessionIds.has(effectiveSessionId) : false)
 
   // Count tool calls, skill calls, and thinking blocks
   // tool_group = live streaming; shell = hydrated from history
@@ -37,7 +39,7 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
   const totalTools = toolCount + skillCount
 
   const handleCopy = async () => {
-    const msgs = useStore.getState().messagesBySession.get(currentSessionId || '')
+    const msgs = useStore.getState().messagesBySession.get(effectiveSessionId || '')
     const msg = msgs?.find((m) => m.id === messageId)
     if (!msg) return
     const text = msg.blocks
@@ -51,18 +53,18 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
   }
 
   const handleDelete = async () => {
-    if (!currentSessionId) return
-    const msgs = useStore.getState().messagesBySession.get(currentSessionId)
+    if (!effectiveSessionId) return
+    const msgs = useStore.getState().messagesBySession.get(effectiveSessionId)
     const index = msgs?.findIndex(m => m.id === messageId) ?? -1
     if (index >= 0) {
-      loomRpc('session.delete_message', { session_id: currentSessionId, index }).catch(() => {})
+      loomRpc('session.delete_message', { session_id: effectiveSessionId, index }).catch(() => {})
     }
-    deleteMessage(currentSessionId, messageId)
+    deleteMessage(effectiveSessionId, messageId)
   }
 
   const handleResend = async () => {
-    if (!currentSessionId || streaming) return
-    const msgs = useStore.getState().messagesBySession.get(currentSessionId)
+    if (!effectiveSessionId || streaming) return
+    const msgs = useStore.getState().messagesBySession.get(effectiveSessionId)
     const msg = msgs?.find((m) => m.id === messageId)
     if (!msg || msg.role !== 'user') return
 
@@ -87,12 +89,12 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
       })),
     ]
 
-    await sendMessage({ sessionId: currentSessionId, content, attachedFiles })
+    await sendMessage({ sessionId: effectiveSessionId, content, attachedFiles })
   }
 
   const handleRetry = async () => {
-    if (!currentSessionId || streaming) return
-    const msgs = useStore.getState().messagesBySession.get(currentSessionId)
+    if (!effectiveSessionId || streaming) return
+    const msgs = useStore.getState().messagesBySession.get(effectiveSessionId)
     const msgIndex = msgs?.findIndex((m) => m.id === messageId) ?? -1
     if (msgIndex <= 0) return
 
@@ -123,7 +125,7 @@ export default function MessageFooterActions({ messageId, role, timestamp, usage
       })),
     ]
 
-    await sendMessage({ sessionId: currentSessionId, content, attachedFiles, skipUserMessage: true })
+    await sendMessage({ sessionId: effectiveSessionId, content, attachedFiles, skipUserMessage: true })
   }
 
   const time = new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })

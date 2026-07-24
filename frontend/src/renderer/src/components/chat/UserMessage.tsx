@@ -9,7 +9,7 @@ import styles from './UserMessage.module.css'
 
 const IMAGE_EXT = /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)(\?.*)?$/i
 
-const UserMessage = memo(function UserMessage({ message }: { message: Message }) {
+const UserMessage = memo(function UserMessage({ message, sessionId }: { message: Message; sessionId?: string | null }) {
   const textBlock = message.blocks.find((b) => b.type === 'text')
   const imageBlocks = message.blocks.filter((b) => b.type === 'image')
   const fileBlocks = message.blocks.filter((b) => b.type === 'file')
@@ -106,13 +106,14 @@ const UserMessage = memo(function UserMessage({ message }: { message: Message })
             <span className={styles.empty}>{t('chat.emptyMessage')}</span>
           ) : null}
         </div>
-        <MessageFooterActions messageId={message.id} role="user" timestamp={message.timestamp} usage={message.usage} />
+        <MessageFooterActions messageId={message.id} role="user" timestamp={message.timestamp} sessionId={sessionId} usage={message.usage} />
       </div>
     </div>
   )
 }, (prev, next) => {
   return prev.message.id === next.message.id &&
-    prev.message.blocks === next.message.blocks
+    prev.message.blocks === next.message.blocks &&
+    prev.sessionId === next.sessionId
 })
 
 export default UserMessage

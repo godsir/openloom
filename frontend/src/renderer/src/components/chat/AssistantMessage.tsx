@@ -176,7 +176,7 @@ const AssistantMessage = memo(function AssistantMessage({
           </div>
         )}
         {message.blocks.length > 0 && (
-          <MessageFooterActions messageId={message.id} role="assistant" timestamp={message.timestamp} usage={message.usage} blocks={message.blocks} />
+          <MessageFooterActions messageId={message.id} role="assistant" timestamp={message.timestamp} sessionId={sessionId} usage={message.usage} blocks={message.blocks} />
         )}
         {!isStreamingActive && isTruncated && (
           <ContinueButton sessionId={sessionId ?? ''} disabled={isStreamingActive} />
