@@ -16,7 +16,7 @@
 
 .inputRow {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 6px;
 }
 
@@ -112,6 +112,10 @@
   outline: none;
   font-family: inherit;
   transition: border-color var(--dur-fast) var(--ease-out);
+  min-height: 48px;
+  max-height: 140px;
+  line-height: 1.5;
+  resize: vertical;
 }
 .input:focus { border-color: var(--accent); }
 .input::placeholder { color: var(--text-muted); opacity: 0.6; }
@@ -161,7 +165,28 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  overflow-x: auto;
+  gap: 8px;
+  overflow: visible;
+}
+
+.selectorGroup {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.selector {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agentLabel {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .personaBtn {

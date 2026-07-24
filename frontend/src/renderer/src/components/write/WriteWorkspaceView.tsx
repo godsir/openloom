@@ -14,7 +14,6 @@ import { WriteAssistantWindow } from './WriteAssistantWindow'
 import { WriteFileDialogs } from './WriteFileDialogs'
 import styles from './WriteWorkspaceView.module.css'
 import { composeWritePrompt, limitWriteContext } from '../../write/quoted-selection'
-import { resolveAgentPreset } from '../../write/agent-presets'
 import { guardWriteNavigation } from '../../write/navigation-guard'
 import { openWriteAssistantWindow } from '../../write/write-assistant-window'
 
@@ -93,10 +92,10 @@ export const WriteWorkspaceView: React.FC = () => {
       workspaceRoot: writeState.workspaceRoot,
       filePath: writeState.activeFilePath,
       fileContent: writeState.fileContent,
-      presetId: writeState.agentPresetId,
       quotes: [...writeState.quotedSelections],
       permissionMode: appState.permissionMode,
       writingAgentName: writeState.writingAgentName,
+      writingModelName: writeState.writingModelName,
       retrievalEnabled: writeState.retrievalEnabled,
     }
     if (!snapshot.workspaceRoot || !snapshot.filePath || !text.trim()) return
@@ -104,7 +103,6 @@ export const WriteWorkspaceView: React.FC = () => {
     const agentName = snapshot.writingAgentName || 'default'
     await loomRpc('session.bind_agent', { session_id: sid, agent_config_name: agentName })
     useStore.getState().setSessionAgentBinding(sid, agentName)
-    const persona = resolveAgentPreset(snapshot.presetId)
     let retrievalContext: string | undefined
     if (snapshot.retrievalEnabled) {
       type RagResult = { ok: boolean; results?: Array<{ file_path: string; text: string; score: number }> }
@@ -134,9 +132,14 @@ export const WriteWorkspaceView: React.FC = () => {
       limitWriteContext(snapshot.fileContent),
       snapshot.quotes.length ? snapshot.quotes : undefined,
       retrievalContext,
-      persona?.persona,
+      undefined,
     )
-    await sendMessage({ sessionId: sid, content, permissionMode: snapshot.permissionMode })
+    await sendMessage({
+      sessionId: sid,
+      content,
+      permissionMode: snapshot.permissionMode,
+      model: snapshot.writingModelName || undefined,
+    })
     useWriteStore.getState().removeQuotedSelections(snapshot.quotes.map((q) => q.id))
   }, [ensureSession])
 

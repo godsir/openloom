@@ -17,6 +17,7 @@ export interface SendMessageOptions {
   skipUserMessage?: boolean
   quotedSelections?: QuotedSelection[]
   permissionMode?: string
+  model?: string
   /** /loop /goal: auto-continue rounds, 0 = use agent config default */
   autoContinueMaxRounds?: number
 }
@@ -92,7 +93,7 @@ async function detectAndPromptCron(sessionId: string, content: string): Promise<
  * Send a message to the backend and manage the streaming state.
  * This is extracted from InputArea so it can be reused by resend/retry buttons.
  */
-export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage, quotedSelections = [], permissionMode, autoContinueMaxRounds }: SendMessageOptions): Promise<void> {
+export async function sendMessage({ sessionId, content, attachedFiles = [], skills, skipUserMessage, quotedSelections = [], permissionMode, model, autoContinueMaxRounds }: SendMessageOptions): Promise<void> {
   const sid = sessionId
   useStore.getState().ensureSession(sid)
 
@@ -188,7 +189,7 @@ export async function sendMessage({ sessionId, content, attachedFiles = [], skil
     const chatResult: any = await loomRpc('chat.send', {
       session_id: sid,
       content,
-      model: currentModel || undefined,
+      model: model || currentModel || undefined,
       thinking_level: thinkingLevel || 'off',
       skills: validSkills && validSkills.length > 0 ? validSkills : undefined,
       skip_user_message: skipUserMessage || undefined,

@@ -83,6 +83,7 @@ interface WriteSettingsSlice {
   longMaxTokens: number;
   retrievalEnabled: boolean;
   writingAgentName: string | null;
+  writingModelName: string | null;
   imageStoragePath: string;
   autoSaveIntervalMs: number;
 
@@ -95,6 +96,7 @@ interface WriteSettingsSlice {
   setInlineCompletionEnabled: (enabled: boolean) => void;
   setRetrievalEnabled: (enabled: boolean) => void;
   setWritingAgentName: (name: string | null) => void;
+  setWritingModelName: (name: string | null) => void;
 }
 
 const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
@@ -114,6 +116,7 @@ const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
   longMaxTokens: 256,
   retrievalEnabled: false,
   writingAgentName: null,
+  writingModelName: null,
   imageStoragePath: '.assets/',
   autoSaveIntervalMs: 900,
 
@@ -151,6 +154,7 @@ const createWriteSettingsSlice = (set: any, _get: any): WriteSettingsSlice => ({
   setInlineCompletionEnabled: (inlineCompletionEnabled) => set({ inlineCompletionEnabled }),
   setRetrievalEnabled: (retrievalEnabled) => set({ retrievalEnabled }),
   setWritingAgentName: (writingAgentName) => set({ writingAgentName }),
+  setWritingModelName: (writingModelName) => set({ writingModelName }),
 });
 
 // ============================================================
@@ -390,6 +394,7 @@ export const useWriteStore = create<WriteStore>()(
         longMaxTokens: state.longMaxTokens,
         retrievalEnabled: state.retrievalEnabled,
         writingAgentName: state.writingAgentName,
+        writingModelName: state.writingModelName,
         imageStoragePath: state.imageStoragePath,
         autoSaveIntervalMs: state.autoSaveIntervalMs,
         agentPresetId: state.agentPresetId,

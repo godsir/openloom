@@ -274,7 +274,7 @@ export default function WriteChatPanel({
           return (
           <div key={msg.id} className={styles.messageItem}>
             {msg.role === 'user'
-              ? <UserMessage message={displayMessage} />
+              ? <UserMessage message={displayMessage} sessionId={sessionId} />
               : <AssistantMessage
                   message={displayMessage}
                   sessionId={sessionId}
