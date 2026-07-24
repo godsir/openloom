@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import GalaxyGraph from './GalaxyGraph'
 import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
@@ -16,6 +17,12 @@ function hashHue(s: string): number {
 
 function entityColor(type: string): string {
   return `hsl(${hashHue(type)}, 70%, 62%)`
+}
+
+function graphEntityName(value: string): string {
+  const separator = value.indexOf('\u0000')
+  const name = separator >= 0 ? value.slice(separator + 1) : value
+  return name === '__SESSION__' ? '会话记忆' : name
 }
 
 const PAGE_SIZE = 20
@@ -74,7 +81,8 @@ export default function KnowledgeGraphTab({
   const [tooltip, setTooltip] = useState<{ node: GraphNode; x: number; y: number } | null>(null)
   const [activeTab] = useState<'list' | 'graph'>(initialSubTab)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [showLabels, setShowLabels] = useState(true)
+  const [showNodeLabels, setShowNodeLabels] = useState(true)
+  const [showRelationLabels, setShowRelationLabels] = useState(false)
   const [listPage, setListPage] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   // expand/walk 异步操作进行中标志：防止连点、给出加载反馈（B16）
@@ -89,6 +97,23 @@ export default function KnowledgeGraphTab({
   /** Suppresses auto-populate after user intentionally clears the graph */
   const userClearedGraph = useRef(false)
   const userChangedGraph = useRef(false)
+
+  useEffect(() => {
+    if (!isFullscreen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setTooltip(null)
+      setIsFullscreen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isFullscreen])
 
   const entityTypeCn = useCallback((type: string): string => {
     // t() 缺失键时返回键名本身而非 null，`?? type` 永远不生效；改为检测返回值
@@ -328,8 +353,11 @@ export default function KnowledgeGraphTab({
       {/* Tabs — graph view toolbar */}
       {initialSubTab === 'graph' && hasData && (
         <div className={styles.tabs}>
-          <button className={styles.labelToggleBtn} onClick={() => setShowLabels(v => !v)} title={showLabels ? t('kg.hideLabels') : t('kg.showLabels')}>
-            {showLabels ? 'Aa' : 'Aa'}
+          <button className={styles.labelToggleBtn} onClick={() => setShowNodeLabels(v => !v)} title={t('kg.nodeLabels')}>
+            {showNodeLabels ? 'N·Aa' : 'N'}
+          </button>
+          <button className={styles.labelToggleBtn} onClick={() => setShowRelationLabels(v => !v)} title={t('kg.relationLabels')}>
+            {showRelationLabels ? 'R·Aa' : 'R'}
           </button>
           <button className={styles.fullscreenBtn} onClick={() => setIsFullscreen(!isFullscreen)} title={isFullscreen ? t('kg.exitFullscreen') : t('kg.fullscreen')}>
             {isFullscreen ? '⤓' : '⤢'}
@@ -416,10 +444,12 @@ export default function KnowledgeGraphTab({
                 )}
               </div>
             ) : (
-              <GalaxyGraph
+              !isFullscreen && <GalaxyGraph
                 nodes={kgGraph.nodes}
                 edges={kgGraph.edges}
-                showLabels={showLabels}
+                showNodeLabels={showNodeLabels}
+                showRelationLabels={showRelationLabels}
+                selectedNodeId={tooltip?.node.id}
                 onNodeClick={(node, cx, cy) => setTooltip({ node, x: cx, y: cy })}
                 onBackgroundClick={() => setTooltip(null)}
               />
@@ -429,10 +459,12 @@ export default function KnowledgeGraphTab({
           {/* Edge list */}
           {hasData && kgGraph && (
             <div className={styles.edgeList}>
-              <div className={styles.edgeListTitle}>{t('kg.relationList')} ({kgGraph.edges.length})</div>
-              {kgGraph.edges.map((e, i) => {
-                const srcName = e.source
-                const tgtName = e.target
+              <div className={styles.edgeListTitle}>
+                {t('kg.relationList')} ({kgGraph.edges.filter(e => e.relation_type !== 'session_memory').length})
+              </div>
+              {kgGraph.edges.filter(e => e.relation_type !== 'session_memory').map((e, i) => {
+                const srcName = graphEntityName(e.source)
+                const tgtName = graphEntityName(e.target)
                 return (
                   <div key={i} className={styles.edgeItem}>
                     <span className={styles.edgeNode}>{srcName}</span>
@@ -468,14 +500,14 @@ export default function KnowledgeGraphTab({
       </div>
 
       {/* Tooltip popup */}
-      {tooltip && (
+      {tooltip && createPortal((
         <div
           className={styles.tooltip}
           style={{
             position: 'fixed',
-            left: tooltip.x + 12,
-            top: tooltip.y - 12,
-            zIndex: 10001,
+            left: Math.max(12, Math.min(tooltip.x + 12, window.innerWidth - 332)),
+            top: Math.max(12, Math.min(tooltip.y - 12, window.innerHeight - 260)),
+            zIndex: 50002,
           }}
         >
           <div className={styles.tooltipName}>{tooltip.node.name}</div>
@@ -487,38 +519,54 @@ export default function KnowledgeGraphTab({
             {t('kg.confidence')} {(tooltip.node.confidence * 100).toFixed(0)}%
           </div>
           <div className={styles.tooltipActions}>
-            <button className={styles.tooltipBtn} disabled={graphOpBusy} onClick={() => handleExpand(tooltip.node.name)}>
-              {t('kg.viewRelated')}
-            </button>
-            <button className={styles.tooltipBtn} disabled={graphOpBusy} onClick={() => handleWalk(tooltip.node.name)}>
-              {t('kg.expandNetwork')}
-            </button>
+            {tooltip.node.entity_type !== 'Session' && (
+              <>
+                <button className={styles.tooltipBtn} disabled={graphOpBusy} onClick={() => handleExpand(tooltip.node.name)}>
+                  {t('kg.viewRelated')}
+                </button>
+                <button className={styles.tooltipBtn} disabled={graphOpBusy} onClick={() => handleWalk(tooltip.node.name)}>
+                  {t('kg.expandNetwork')}
+                </button>
+              </>
+            )}
             <button className={styles.tooltipBtn} onClick={() => setTooltip(null)}>
               {t('common.close')}
             </button>
           </div>
         </div>
-      )}
+      ), document.body)}
 
       {/* Fullscreen portal */}
-      {isFullscreen && activeTab === 'graph' && hasData && (
+      {isFullscreen && activeTab === 'graph' && hasData && createPortal((
         <div className={styles.fullscreenOverlay} ref={fullscreenWrapRef} style={{ display: 'block' }}>
           <StarField width={window.innerWidth} height={window.innerHeight} className={styles.starField} />
           <GalaxyGraph
             nodes={kgGraph.nodes}
             edges={kgGraph.edges}
-            showLabels={showLabels}
+            showNodeLabels={showNodeLabels}
+            showRelationLabels={showRelationLabels}
+            selectedNodeId={tooltip?.node.id}
             onNodeClick={(node, cx, cy) => setTooltip({ node, x: cx, y: cy })}
             onBackgroundClick={() => setTooltip(null)}
           />
           <button
+            type="button"
             className={styles.fullscreenLabelBtn}
-            onClick={() => setShowLabels(v => !v)}
-            title={showLabels ? t('kg.hideLabels') : t('kg.showLabels')}
+            onClick={() => setShowNodeLabels(v => !v)}
+            title={t('kg.nodeLabels')}
           >
-            {showLabels ? 'Aa' : 'Aa'}
+            {showNodeLabels ? 'N·Aa' : 'N'}
           </button>
           <button
+            type="button"
+            className={styles.fullscreenRelationLabelBtn}
+            onClick={() => setShowRelationLabels(v => !v)}
+            title={t('kg.relationLabels')}
+          >
+            {showRelationLabels ? 'R·Aa' : 'R'}
+          </button>
+          <button
+            type="button"
             className={styles.fullscreenCloseBtn}
             onClick={() => {
               setTooltip(null)
@@ -529,7 +577,7 @@ export default function KnowledgeGraphTab({
             ✕
           </button>
         </div>
-      )}
+      ), document.body)}
     </div>
   )
 }

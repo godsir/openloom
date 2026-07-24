@@ -21,15 +21,19 @@ interface GraphEdge {
 interface Position {
   x: number
   y: number
+  anchorX: number
+  anchorY: number
   vx: number
   vy: number
   pinned: boolean
 }
 
 interface GalaxyGraphProps {
-  nodes: { name: string; entity_type: string; description: string; confidence: number; scope: string }[]
+  nodes: { name: string; original_name?: string; entity_type: string; description: string; confidence: number; scope: string }[]
   edges: { source: string; target: string; relation_type: string; confidence: number }[]
-  showLabels: boolean
+  showNodeLabels: boolean
+  showRelationLabels: boolean
+  selectedNodeId?: string | null
   onNodeClick: (node: GraphNode, clientX: number, clientY: number) => void
   onBackgroundClick: () => void
 }
@@ -64,7 +68,9 @@ const PHYSICS = {
   damping: 0.88,
   maxForce: 8,
   stopEnergy: 0.05,
-  gravity: 0.00035,
+  // Galaxies are intentionally not pulled back into one global centre.
+  gravity: 0,
+  anchorStrength: 0.012,
   gridCellSize: 250,
 }
 
@@ -162,10 +168,85 @@ function createNodeSprite(hue: number, sat: number, lit: number, r: number, isUs
 }
 
 // ── Idle frame rates ───────────────────────────────────────────────
-const IDLE_FPS = 4          // fps when graph is stable and user is idle
+function createGalaxySprite(seed: number, hue: number): HTMLCanvasElement {
+  const size = 640
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const rng = pseudoRandom(Math.max(1, seed))
+  const cx = size / 2
+  const cy = size / 2
+  const rotation = rng() * Math.PI * 2
+
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.46)
+  halo.addColorStop(0, `hsla(${(hue + 34) % 360}, 92%, 88%, 0.52)`)
+  halo.addColorStop(0.06, `hsla(${(hue + 18) % 360}, 90%, 72%, 0.28)`)
+  halo.addColorStop(0.24, `hsla(${hue}, 82%, 55%, 0.11)`)
+  halo.addColorStop(0.65, `hsla(${(hue + 285) % 360}, 72%, 42%, 0.035)`)
+  halo.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = halo
+  ctx.fillRect(0, 0, size, size)
+
+  const gas = document.createElement('canvas')
+  gas.width = size
+  gas.height = size
+  const gctx = gas.getContext('2d')!
+  gctx.globalCompositeOperation = 'lighter'
+  for (let i = 0; i < 1400; i++) {
+    const arm = i % 4
+    const progress = Math.pow(rng(), 0.72)
+    const radius = 18 + progress * size * 0.41
+    const angle = rotation + arm * Math.PI / 2 + progress * Math.PI * 4.2 + (rng() - 0.5) * (0.3 + progress * 0.55)
+    const spread = (rng() - 0.5) * (10 + progress * 32)
+    const x = cx + Math.cos(angle) * radius + Math.cos(angle + Math.PI / 2) * spread
+    const y = cy + (Math.sin(angle) * radius + Math.sin(angle + Math.PI / 2) * spread) * 0.62
+    const pr = 2 + rng() * 7
+    const grad = gctx.createRadialGradient(x, y, 0, x, y, pr)
+    grad.addColorStop(0, `hsla(${rng() > 0.48 ? hue : (hue + 285) % 360}, 88%, 68%, ${0.025 + rng() * 0.055})`)
+    grad.addColorStop(1, 'rgba(0,0,0,0)')
+    gctx.fillStyle = grad
+    gctx.fillRect(x - pr, y - pr, pr * 2, pr * 2)
+  }
+  ctx.save()
+  ctx.filter = 'blur(5px)'
+  ctx.globalCompositeOperation = 'screen'
+  ctx.drawImage(gas, 0, 0)
+  ctx.restore()
+
+  ctx.globalCompositeOperation = 'lighter'
+  for (let i = 0; i < 2600; i++) {
+    const arm = i % 4
+    const progress = Math.pow(rng(), 0.64)
+    const radius = 8 + progress * size * 0.43
+    const angle = rotation + arm * Math.PI / 2 + progress * Math.PI * 4.2 + (rng() - 0.5) * (0.18 + progress * 0.42)
+    const spread = (rng() - 0.5) * (5 + progress * 25)
+    const x = cx + Math.cos(angle) * radius + Math.cos(angle + Math.PI / 2) * spread
+    const y = cy + (Math.sin(angle) * radius + Math.sin(angle + Math.PI / 2) * spread) * 0.62
+    const r = rng() > 0.975 ? 1.35 : 0.25 + rng() * 0.65
+    ctx.beginPath()
+    ctx.arc(x, y, r, 0, Math.PI * 2)
+    ctx.fillStyle = rng() > 0.72
+      ? `rgba(255, ${205 + Math.floor(rng() * 45)}, ${150 + Math.floor(rng() * 80)}, ${0.2 + rng() * 0.6})`
+      : `hsla(${rng() > 0.5 ? hue : (hue + 275) % 360}, 80%, 82%, ${0.12 + rng() * 0.5})`
+    ctx.fill()
+  }
+
+  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.105)
+  core.addColorStop(0, 'rgba(255,250,218,0.98)')
+  core.addColorStop(0.14, 'rgba(255,220,155,0.82)')
+  core.addColorStop(0.48, `hsla(${(hue + 18) % 360}, 92%, 68%, 0.28)`)
+  core.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = core
+  ctx.fillRect(0, 0, size, size)
+  ctx.globalCompositeOperation = 'source-over'
+  return canvas
+}
+
+const IDLE_FPS = 12         // keep the universe alive after layout physics settles
 const IDLE_INTERVAL = 1000 / IDLE_FPS
 
-export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onBackgroundClick }: GalaxyGraphProps) {
+export default function GalaxyGraph({ nodes, edges, showNodeLabels, showRelationLabels, selectedNodeId, onNodeClick, onBackgroundClick }: GalaxyGraphProps) {
   const { t } = useLocale()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const positionsRef = useRef<Map<string, Position>>(new Map())
@@ -182,6 +263,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
   const animRef = useRef<number>(0)
   const nodesRef = useRef(nodes)
   const edgesRef = useRef(edges)
+  const hoveredNodeRef = useRef<string | null>(null)
   nodesRef.current = nodes
   edgesRef.current = edges
 
@@ -200,6 +282,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
 
   // ── Sprite cache ──────────────────────────────────────────────────
   const spriteCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map())
+  const galaxySpriteCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map())
 
   const getSprite = useCallback((name: string, entity_type: string, r: number): HTMLCanvasElement => {
     const key = name === 'USER' ? `user_${Math.round(r)}` : `n_${entityHue(entity_type)}_${Math.round(r)}`
@@ -281,21 +364,32 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         if (comp.length > 0) galaxies.push(comp)
       }
 
-      pos.set('USER', { x: 0, y: 0, vx: 0, vy: 0, pinned: false })
+      pos.set('USER', { x: 0, y: 0, anchorX: 0, anchorY: 0, vx: 0, vy: 0, pinned: false })
 
-      const galaxyRadius = 340
-      const clusterRadius = 150
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5))
       for (let gi = 0; gi < galaxies.length; gi++) {
-        const angle = (gi / Math.max(galaxies.length, 1)) * Math.PI * 2
+        const ring = Math.floor(Math.sqrt(gi))
+        const ringStart = ring * ring
+        const ringCount = Math.max(1, (ring + 1) * (ring + 1) - ringStart)
+        const angle = ((gi - ringStart) / ringCount) * Math.PI * 2 + ring * 0.42
+        const galaxyRadius = 330 + ring * 290
         const gx = Math.cos(angle) * galaxyRadius
         const gy = Math.sin(angle) * galaxyRadius
-        for (const name of galaxies[gi]) {
+        const ordered = [...galaxies[gi]].sort((a, b) => hashString(a) - hashString(b))
+        for (let ni = 0; ni < ordered.length; ni++) {
+          const name = ordered[ni]
           const rng = pseudoRandom(hashString(name + ':' + gi))
-          const la = rng() * Math.PI * 2
-          const lr = 20 + rng() * clusterRadius
+          const arm = ni % 3
+          const lr = 18 + Math.sqrt(ni + 1) * 34 + rng() * 18
+          const la = ni * goldenAngle + arm * (Math.PI * 2 / 3) + rng() * 0.24
+          const cosA = Math.cos(angle)
+          const sinA = Math.sin(angle)
+          const lx = Math.cos(la) * lr
+          const ly = Math.sin(la) * lr * 0.58
+          const x = gx + lx * cosA - ly * sinA
+          const y = gy + lx * sinA + ly * cosA
           pos.set(name, {
-            x: gx + Math.cos(la) * lr,
-            y: gy + Math.sin(la) * lr,
+            x, y, anchorX: x, anchorY: y,
             vx: (rng() - 0.5) * 2,
             vy: (rng() - 0.5) * 2,
             pinned: false,
@@ -308,9 +402,10 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
           const rng = pseudoRandom(hashString(n.name))
           const a = rng() * Math.PI * 2
           const r = 480 + rng() * 180
+          const x = Math.cos(a) * r
+          const y = Math.sin(a) * r
           pos.set(n.name, {
-            x: Math.cos(a) * r,
-            y: Math.sin(a) * r,
+            x, y, anchorX: x, anchorY: y,
             vx: (rng() - 0.5) * 2,
             vy: (rng() - 0.5) * 2,
             pinned: false,
@@ -331,17 +426,19 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         const rng = pseudoRandom(hashString(n.name))
         if (count > 0) {
           cx /= count; cy /= count
+          const x = cx + (rng() - 0.5) * 60
+          const y = cy + (rng() - 0.5) * 60
           pos.set(n.name, {
-            x: cx + (rng() - 0.5) * 60,
-            y: cy + (rng() - 0.5) * 60,
+            x, y, anchorX: x, anchorY: y,
             vx: (rng() - 0.5) * 2,
             vy: (rng() - 0.5) * 2,
             pinned: false,
           })
         } else {
+          const x = (rng() - 0.5) * 400
+          const y = (rng() - 0.5) * 400
           pos.set(n.name, {
-            x: (rng() - 0.5) * 400,
-            y: (rng() - 0.5) * 400,
+            x, y, anchorX: x, anchorY: y,
             vx: (rng() - 0.5) * 2,
             vy: (rng() - 0.5) * 2,
             pinned: false,
@@ -363,6 +460,12 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     if (nodeList.length === 0) return true
 
     const adj = getAdjacency()
+    const sessionLinks = new Set<string>()
+    for (const edge of edgesRef.current) {
+      if (edge.relation_type !== 'session_memory') continue
+      sessionLinks.add(`${edge.source}\u0000${edge.target}`)
+      sessionLinks.add(`${edge.target}\u0000${edge.source}`)
+    }
 
     const grid = buildSpatialHash(nodeList, pos, PHYSICS.gridCellSize)
 
@@ -399,13 +502,16 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         const dx = pb.x - pa.x
         const dy = pb.y - pa.y
         const dist = Math.sqrt(dx * dx + dy * dy) || 1
-        const force = (dist - PHYSICS.springRest) * PHYSICS.springStrength
+        const restLength = sessionLinks.has(`${a.name}\u0000${nb}`) ? 78 : PHYSICS.springRest
+        const force = (dist - restLength) * PHYSICS.springStrength
         fx += (dx / dist) * force
         fy += (dy / dist) * force
       }
 
       fx -= pa.x * PHYSICS.gravity
       fy -= pa.y * PHYSICS.gravity
+      fx += (pa.anchorX - pa.x) * PHYSICS.anchorStrength
+      fy += (pa.anchorY - pa.y) * PHYSICS.anchorStrength
 
       pa.vx = (pa.vx + fx) * PHYSICS.damping
       pa.vy = (pa.vy + fy) * PHYSICS.damping
@@ -475,6 +581,66 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       nodeVisible.set(n.name, p.x >= vpMinX && p.x <= vpMaxX && p.y >= vpMinY && p.y <= vpMaxY)
     }
 
+    // Soft nebulae make connected components read as separate galaxies.
+    const adjacency = getAdjacency()
+    const visited = new Set<string>()
+    for (const node of nodeList) {
+      if (node.name === 'USER' || visited.has(node.name)) continue
+      const component: string[] = []
+      const stack = [node.name]
+      while (stack.length) {
+        const name = stack.pop()!
+        if (visited.has(name)) continue
+        visited.add(name)
+        component.push(name)
+        for (const neighbor of adjacency.get(name) || []) {
+          if (!visited.has(neighbor)) stack.push(neighbor)
+        }
+      }
+      if (!component.length) continue
+      let gx = 0; let gy = 0; let count = 0
+      for (const name of component) {
+        const p = pos.get(name)
+        if (p) { gx += p.x; gy += p.y; count++ }
+      }
+      if (!count) continue
+      gx /= count; gy /= count
+      const coreName = component.find(name => {
+        if (name === 'USER') return true
+        return nodeList.find(candidate => candidate.name === name)?.entity_type === 'Session'
+      })
+      const corePosition = coreName ? pos.get(coreName) : null
+      if (corePosition) {
+        gx = corePosition.x
+        gy = corePosition.y
+      }
+      let radius = 80
+      for (const name of component) {
+        const p = pos.get(name)
+        if (p) radius = Math.max(radius, Math.hypot(p.x - gx, p.y - gy) + 65)
+      }
+      const hue = entityHue(node.entity_type)
+      const componentKey = component.slice().sort().join('|')
+      const galaxySeed = hashString(componentKey)
+      const spriteKey = `${galaxySeed}:${hue}`
+      let galaxySprite = galaxySpriteCacheRef.current.get(spriteKey)
+      if (!galaxySprite) {
+        galaxySprite = createGalaxySprite(hashString(componentKey), hue)
+        galaxySpriteCacheRef.current.set(spriteKey, galaxySprite)
+      }
+      const diameter = Math.max(210, radius * 2.75)
+      ctx.save()
+      ctx.translate(gx, gy)
+      const direction = galaxySeed % 2 === 0 ? 1 : -1
+      const angularSpeed = 0.006 + (galaxySeed % 7) * 0.0007
+      ctx.rotate(now * angularSpeed * direction)
+      ctx.globalCompositeOperation = 'screen'
+      const breathe = 0.94 + Math.sin(now * 0.55 + galaxySeed) * 0.06
+      ctx.globalAlpha = (component.length <= 2 ? 0.46 : 0.82) * breathe
+      ctx.drawImage(galaxySprite, -diameter / 2, -diameter / 2, diameter, diameter)
+      ctx.restore()
+    }
+
     // Draw edges
     for (const e of edgeList) {
       const sp = pos.get(e.source)
@@ -486,11 +652,24 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       ctx.beginPath()
       ctx.moveTo(sp.x, sp.y)
       ctx.lineTo(tp.x, tp.y)
-      ctx.strokeStyle = 'hsla(220, 40%, 55%, 0.18)'
+      const focusNode = hoveredNodeRef.current || selectedNodeId
+      const connected = focusNode && (e.source === focusNode || e.target === focusNode)
+      const isSessionLink = e.relation_type === 'session_memory'
+      const isUserLink = e.source === 'USER' || e.target === 'USER'
+      if (isUserLink && !connected && tr.scale < 1.35) continue
+      ctx.strokeStyle = connected
+        ? 'hsla(195, 85%, 72%, 0.72)'
+        : isSessionLink
+          ? 'hsla(215, 55%, 64%, 0.09)'
+        : isUserLink
+          ? 'hsla(215, 45%, 65%, 0.045)'
+        : focusNode
+          ? 'hsla(220, 35%, 52%, 0.07)'
+          : 'hsla(220, 45%, 62%, 0.16)'
       ctx.lineWidth = 1.0 / tr.scale
       ctx.stroke()
 
-      if (showLabels) {
+      if (!isSessionLink && showRelationLabels && (connected || tr.scale >= 1.55)) {
         const mx = (sp.x + tp.x) / 2
         const my = (sp.y + tp.y) / 2
         const fontSize = Math.max(8, 10 / tr.scale)
@@ -512,13 +691,27 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       }
     }
 
-    // Draw nodes
-    for (const n of nodeList) {
+    // Draw important/core nodes first so their labels win collision avoidance.
+    const labelBoxes: Array<{ left: number; top: number; right: number; bottom: number }> = []
+    const renderNodes = [...nodeList].sort((a, b) => {
+      const score = (node: typeof a) =>
+        (node.name === 'USER' ? 1000 : node.entity_type === 'Session' ? 500 : 0) +
+        (adjacency.get(node.name)?.length || 0) * 10 +
+        node.confidence
+      return score(b) - score(a)
+    })
+    for (const n of renderNodes) {
       const p = pos.get(n.name)
       if (!p || !nodeVisible.get(n.name)) continue
 
       const isUser = n.name === 'USER'
-      const baseR = isUser ? 20 : 6 + n.confidence * 10
+      const isSessionHub = n.entity_type === 'Session'
+      const degree = adjacency.get(n.name)?.length || 0
+      const baseR = isUser
+        ? 22
+        : isSessionHub
+          ? 12
+          : 7 + n.confidence * 8 + Math.min(7, Math.log2(degree + 1) * 2.1)
       const hue = isUser ? 45 : entityHue(n.entity_type)
       const sat = isUser ? 90 : 70
       const lit = isUser ? 70 : 65
@@ -552,25 +745,59 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       const sprite = getSprite(n.name, n.entity_type, Math.round(baseR))
       const spriteSize = sprite.width
       const halfSize = spriteSize / 2
+      ctx.save()
+      ctx.globalAlpha = isUser
+        ? 1
+        : 0.84 + Math.sin(now * (1.1 + (hashString(n.name) % 5) * 0.08) + hashString(n.name)) * 0.16
       ctx.drawImage(sprite, p.x - halfSize, p.y - halfSize, spriteSize, spriteSize)
+      ctx.restore()
 
-      if (showLabels) {
+      const isHovered = hoveredNodeRef.current === n.name
+      const isSelected = selectedNodeId === n.name
+      if (isHovered || isSelected) {
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, baseR + 8 / tr.scale, 0, Math.PI * 2)
+        ctx.strokeStyle = `hsla(${hue}, 90%, 78%, 0.95)`
+        ctx.lineWidth = (isSelected ? 2.6 : 2) / tr.scale
+        ctx.stroke()
+      }
+
+      if (showNodeLabels && (
+        isHovered || isSelected || isUser ||
+        tr.scale >= 1.05 || (tr.scale >= 0.68 && (degree >= 3 || n.confidence >= 0.84))
+      )) {
         const fontSize = Math.max(9, 11 / tr.scale)
         ctx.font = (isUser ? 'bold ' : '') + fontSize + 'px sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
         const labelY = p.y + baseR + 5 / tr.scale
-        const textW = ctx.measureText(n.name).width
+        const displayName = n.original_name || n.name
+        const textW = ctx.measureText(displayName).width
         const textH = fontSize * 1.2
-        ctx.fillStyle = 'rgba(0,0,0,0.65)'
-        ctx.fillRect(p.x - textW / 2 - 2, labelY - 1, textW + 4, textH + 2)
-        ctx.fillStyle = `hsla(${hue}, 50%, 88%, 0.9)`
-        ctx.fillText(n.name, p.x, labelY)
+        const box = {
+          left: p.x - textW / 2 - 4 / tr.scale,
+          top: labelY - 2 / tr.scale,
+          right: p.x + textW / 2 + 4 / tr.scale,
+          bottom: labelY + textH + 3 / tr.scale,
+        }
+        const overlaps = labelBoxes.some(other =>
+          box.left < other.right && box.right > other.left &&
+          box.top < other.bottom && box.bottom > other.top
+        )
+        if (!overlaps || isHovered || isSelected) {
+          labelBoxes.push(box)
+          ctx.fillStyle = 'rgba(3,7,18,0.76)'
+          ctx.beginPath()
+          ctx.roundRect(box.left, box.top, box.right - box.left, box.bottom - box.top, 4 / tr.scale)
+          ctx.fill()
+          ctx.fillStyle = `hsla(${hue}, 55%, 90%, ${isHovered || isSelected ? 1 : 0.9})`
+          ctx.fillText(displayName, p.x, labelY)
+        }
       }
     }
 
     ctx.restore()
-  }, [showLabels, getSprite, translateRel])
+  }, [showNodeLabels, showRelationLabels, selectedNodeId, getAdjacency, getSprite, translateRel])
 
   // ── Animation + physics loop ──────────────────────────────────────
   const stableFramesRef = useRef(0)
@@ -605,7 +832,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       const timeSinceLastDraw = timestamp - lastDrawTimeRef.current
 
       if (isIdle) {
-        if (timeSinceLastDraw >= IDLE_INTERVAL && needsDrawRef.current) {
+        if (timeSinceLastDraw >= IDLE_INTERVAL) {
           draw()
           lastDrawTimeRef.current = timestamp
           needsDrawRef.current = false
@@ -632,6 +859,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     adjCacheRef.current.version = -1
     const pos = positionsRef.current
     spriteCacheRef.current.clear()
+    galaxySpriteCacheRef.current.clear()
     for (const p of pos.values()) {
       p.vx += (hashString(p.x.toFixed(2)) / 2147483646 - 0.5) * 4
       p.vy += (hashString(p.y.toFixed(2)) / 2147483646 - 0.5) * 4
@@ -648,23 +876,31 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
     const h = canvas.clientHeight
     const cx = w / 2
     const cy = h / 2
-    const wx = (sx - (tr.x + cx)) / tr.scale
-    const wy = (sy - (tr.y + cy)) / tr.scale
-
     const pos = positionsRef.current
     const nodeList = nodesRef.current
-    for (let i = nodeList.length - 1; i >= 0; i--) {
-      const n = nodeList[i]
+    const adjacency = getAdjacency()
+    let best: { name: string; score: number } | null = null
+    for (const n of nodeList) {
       const p = pos.get(n.name)
       if (!p) continue
-      const r = n.name === 'USER' ? 22 : 8 + n.confidence * 14
-      const hitR = Math.max(r * 1.5, 20)
-      const dx = wx - p.x
-      const dy = wy - p.y
-      if (dx * dx + dy * dy < hitR * hitR) return n.name
+      const screenX = tr.x + cx + p.x * tr.scale
+      const screenY = tr.y + cy + p.y * tr.scale
+      const degree = adjacency.get(n.name)?.length || 0
+      const nodeRadius = n.name === 'USER'
+        ? 22
+        : n.entity_type === 'Session'
+          ? 12
+          : 7 + n.confidence * 8 + Math.min(7, Math.log2(degree + 1) * 2.1)
+      const visualR = nodeRadius * tr.scale
+      const hitR = Math.max(13, Math.min(30, visualR + 9))
+      const distance = Math.hypot(sx - screenX, sy - screenY)
+      if (distance <= hitR) {
+        const score = distance / hitR
+        if (!best || score < best.score) best = { name: n.name, score }
+      }
     }
-    return null
-  }, [])
+    return best?.name ?? null
+  }, [getAdjacency])
 
   const getCanvasPos = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current
@@ -690,13 +926,34 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       if (p) p.pinned = true
 
       const neighborPins = new Map<string, { px: number; py: number }>()
-      for (const e of edgesRef.current) {
-        const nb = e.source === hit ? e.target : e.target === hit ? e.source : null
-        if (nb) {
-          const np = positionsRef.current.get(nb)
-          if (np) {
-            np.pinned = true
-            neighborPins.set(nb, { px: np.x, py: np.y })
+      const hitNode = nodesRef.current.find(node => node.name === hit)
+      const moveWholeGalaxy = hit === 'USER' || hitNode?.entity_type === 'Session'
+      if (moveWholeGalaxy) {
+        const adjacency = getAdjacency()
+        const visited = new Set<string>([hit])
+        const queue = [hit]
+        while (queue.length > 0) {
+          const current = queue.shift()!
+          for (const neighbor of adjacency.get(current) || []) {
+            if (visited.has(neighbor)) continue
+            visited.add(neighbor)
+            queue.push(neighbor)
+            const np = positionsRef.current.get(neighbor)
+            if (np) {
+              np.pinned = true
+              neighborPins.set(neighbor, { px: np.x, py: np.y })
+            }
+          }
+        }
+      } else {
+        for (const e of edgesRef.current) {
+          const nb = e.source === hit ? e.target : e.target === hit ? e.source : null
+          if (nb) {
+            const np = positionsRef.current.get(nb)
+            if (np) {
+              np.pinned = true
+              neighborPins.set(nb, { px: np.x, py: np.y })
+            }
           }
         }
       }
@@ -730,6 +987,10 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
 
       const { x, y } = getCanvasPos(e)
       const hit = hitTest(x, y)
+      if (hoveredNodeRef.current !== hit) {
+        hoveredNodeRef.current = hit
+        needsDrawRef.current = true
+      }
       if (canvasRef.current) {
         canvasRef.current.style.cursor = hit ? 'pointer' : 'grab'
       }
@@ -749,6 +1010,8 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       if (p) {
         p.x = d.px + dx / tr.scale
         p.y = d.py + dy / tr.scale
+        p.anchorX = p.x
+        p.anchorY = p.y
       }
       if (d.neighborPins) {
         for (const [name, init] of d.neighborPins) {
@@ -756,12 +1019,14 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
           if (np) {
             np.x = init.px + dx / tr.scale
             np.y = init.py + dy / tr.scale
+            np.anchorX = np.x
+            np.anchorY = np.y
           }
         }
       }
     }
     needsDrawRef.current = true
-  }, [getCanvasPos, hitTest])
+  }, [getAdjacency, getCanvasPos, hitTest])
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     userActiveRef.current = false
@@ -784,7 +1049,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
         if (nodeData) {
           onNodeClick({
             id: nodeData.name,
-            name: nodeData.name,
+            name: nodeData.original_name || nodeData.name,
             entity_type: nodeData.entity_type,
             description: nodeData.description,
             confidence: nodeData.confidence,
@@ -840,6 +1105,11 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
   }, [])
+  const handleMouseLeave = useCallback((e: React.MouseEvent) => {
+    hoveredNodeRef.current = null
+    needsDrawRef.current = true
+    handleMouseUp(e)
+  }, [handleMouseUp])
 
   return (
     <canvas
@@ -856,7 +1126,7 @@ export default function GalaxyGraph({ nodes, edges, showLabels, onNodeClick, onB
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
       onContextMenu={handleContextMenu}
     />
   )

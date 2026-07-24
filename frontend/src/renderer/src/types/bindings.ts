@@ -55,6 +55,8 @@ export interface KgNode {
   confidence: number
   scope: string
   layer: string
+  /** Original entity name when the graph uses a scope-qualified render id. */
+  original_name?: string
 }
 
 export interface KgEdge {

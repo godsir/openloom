@@ -7,6 +7,18 @@ import { loadAllKgNodes } from './loadAllKgNodes'
 let kgListGeneration = 0
 let kgGraphGeneration = 0
 
+function hashStringForGraph(value: string): number {
+  let hash = 0
+  for (let i = 0; i < value.length; i++) hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0
+  return hash || 1
+}
+
+function shortSessionLabel(sessionId: string, title?: string | null): string {
+  const cleanTitle = title?.replace(/^\[[^\]]+\]\s*/, '').trim()
+  if (cleanTitle) return cleanTitle.length > 18 ? cleanTitle.slice(0, 17) + '…' : cleanTitle
+  return '会话记忆'
+}
+
 export interface KgSlice {
   kgSearchResults: KgNode[]
   kgGraph: KgGraph | null
@@ -148,6 +160,83 @@ export const createKgSlice: StateCreator<KgSlice> = (set, get) => ({
   kgLoadGraph: async (seeds, maxDepth = 2, scope, nodes) => {
     const generation = ++kgGraphGeneration
     const sourceNodes = nodes ?? get().kgNodeList
+    // Session-scoped memories are separate galaxies. Qualifying render IDs by
+    // scope prevents same-named entities from different sessions collapsing
+    // into one node, while original_name remains available for KG actions.
+    const nodesByScope = new Map<string, KgNode[]>()
+    for (const node of sourceNodes) {
+      const nodeScope = node.scope || 'global'
+      const group = nodesByScope.get(nodeScope) || []
+      group.push(node)
+      nodesByScope.set(nodeScope, group)
+    }
+    const sessionScopes = [...nodesByScope.keys()].filter(s => s !== 'global')
+    if (sessionScopes.length > 0) {
+      const sessionTitles = new Map<string, string | null>(
+        (((get() as any).sessions || []) as Array<{ path: string; title: string | null }>)
+          .map(session => [session.path, session.title]),
+      )
+      const scopedGraphs = await Promise.all(
+        [...nodesByScope.entries()].map(async ([nodeScope, scopeNodes]) => {
+          const names = [...new Set(scopeNodes.map(n => n.name))]
+          let scopeEdges: KgEdge[] = []
+          try {
+            const result = await loomRpc<{ edges: KgEdge[] }>('kg.edges_between', {
+              node_names: names,
+              scope: nodeScope,
+            })
+            scopeEdges = result.edges || []
+          } catch (err) {
+            console.error('[kgLoadGraph] scoped edge load failed:', nodeScope, err)
+          }
+          const prefix = nodeScope === 'global' ? '' : `${nodeScope}\u0000`
+          const renderedNodes = scopeNodes.map(node => ({
+            ...node,
+            name: prefix + node.name,
+            original_name: node.name,
+          }))
+          const renderedEdges = scopeEdges.map(edge => ({
+            ...edge,
+            source: prefix + edge.source,
+            target: prefix + edge.target,
+          }))
+
+          if (nodeScope !== 'global') {
+            const hubName = `${prefix}__SESSION__`
+            renderedNodes.unshift({
+              node_id: -Math.abs(hashStringForGraph(nodeScope)),
+              name: hubName,
+              original_name: shortSessionLabel(nodeScope, sessionTitles.get(nodeScope)),
+              entity_type: 'Session',
+              description: `Session memory galaxy: ${nodeScope}`,
+              confidence: 1,
+              scope: nodeScope,
+              layer: 'episodic',
+            })
+            for (const node of scopeNodes) {
+              renderedEdges.push({
+                source: hubName,
+                target: prefix + node.name,
+                relation_type: 'session_memory',
+                fact: '',
+                confidence: 1,
+              })
+            }
+          }
+          return { nodes: renderedNodes, edges: renderedEdges }
+        }),
+      )
+      if (generation === kgGraphGeneration) {
+        set({
+          kgGraph: {
+            nodes: scopedGraphs.flatMap(graph => graph.nodes),
+            edges: scopedGraphs.flatMap(graph => graph.edges),
+          },
+          kgSelectedNode: null,
+        })
+      }
+      return
+    }
     // ── Approach C: Galaxy-aware graph loading ───────────────────────
     // Phase 1: Walk USER depth 1 → discover galaxy centres (1-hop neighbours)
     // Phase 2: Walk each centre depth=maxDepth → build its galaxy
