@@ -23,7 +23,7 @@ export function useMenuKeyboard({
   setActiveIndex,
   onSelect,
   onClose,
-}: MenuKeyboardOptions) {
+}: MenuKeyboardOptions, eventDocument: Document = document) {
   // 用 ref 持有最新回调，effect 仅在 open/itemCount 变化时重绑，避免抖动
   const stateRef = useRef({ activeIndex, itemCount, setActiveIndex, onSelect, onClose })
   stateRef.current = { activeIndex, itemCount, setActiveIndex, onSelect, onClose }
@@ -46,9 +46,9 @@ export function useMenuKeyboard({
         s.onClose()
       }
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, itemCount])
+    eventDocument.addEventListener('keydown', onKey)
+    return () => eventDocument.removeEventListener('keydown', onKey)
+  }, [open, itemCount, eventDocument])
 }
 
 /**
@@ -62,6 +62,7 @@ export function useClickOutside(
   isInside: (target: Node) => boolean,
   onClickOutside: () => void,
   enabled: boolean,
+  eventDocument: Document = document,
 ) {
   const isInsideRef = useRef(isInside)
   isInsideRef.current = isInside
@@ -74,10 +75,10 @@ export function useClickOutside(
       if (isInsideRef.current(e.target as Node)) return
       cbRef.current()
     }
-    const id = setTimeout(() => document.addEventListener('pointerdown', handler), 0)
+    const id = setTimeout(() => eventDocument.addEventListener('pointerdown', handler), 0)
     return () => {
       clearTimeout(id)
-      document.removeEventListener('pointerdown', handler)
+      eventDocument.removeEventListener('pointerdown', handler)
     }
-  }, [enabled])
+  }, [enabled, eventDocument])
 }

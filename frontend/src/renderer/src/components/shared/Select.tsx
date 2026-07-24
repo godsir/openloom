@@ -60,6 +60,8 @@ export default function Select<T extends string = string>({
   const [activeIndex, setActiveIndex] = useState(0)
   const menuIdRef = useRef(`select-menu-${Math.random().toString(36).slice(2, 8)}`)
   const selected = options.find((o) => o.value === value)
+  const ownerDocument = triggerRef.current?.ownerDocument ?? document
+  const ownerWindow = ownerDocument.defaultView ?? window
   const label = selected?.label ?? placeholder ?? ''
   const selectedAvatar = selected?.avatar ?? null
 
@@ -82,7 +84,7 @@ export default function Select<T extends string = string>({
       options.length * ITEM_HEIGHT + groupHeaders.length * HEADER_HEIGHT,
       MENU_MAX_HEIGHT,
     )
-    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN
+    const spaceBelow = ownerWindow.innerHeight - rect.bottom - VIEWPORT_MARGIN
     const spaceAbove = rect.top - VIEWPORT_MARGIN
     const shouldFlip = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
 
@@ -91,7 +93,7 @@ export default function Select<T extends string = string>({
     // Keep the menu inside the viewport when the trigger sits near the right
     // edge (e.g. the channel pill under page zoom): right-align to the
     // trigger rather than overflowing the window.
-    if (left + width > window.innerWidth - VIEWPORT_MARGIN) {
+    if (left + width > ownerWindow.innerWidth - VIEWPORT_MARGIN) {
       left = Math.max(rect.right - width, VIEWPORT_MARGIN)
     }
     // Cap height to the space available in the chosen direction so the menu
@@ -109,12 +111,12 @@ export default function Select<T extends string = string>({
       zIndex: 9999,
     }
     if (shouldFlip) {
-      pos.bottom = window.innerHeight - rect.top + MENU_GAP
+      pos.bottom = ownerWindow.innerHeight - rect.top + MENU_GAP
     } else {
       pos.top = rect.bottom + MENU_GAP
     }
     setMenuPos(pos)
-  }, [options.length, groupHeaders.length, menuWidth])
+  }, [options.length, groupHeaders.length, menuWidth, ownerWindow])
 
   // 打开时定位，并把键盘高亮复位到当前选中项
   useEffect(() => {
@@ -131,6 +133,7 @@ export default function Select<T extends string = string>({
       !!triggerRef.current?.contains(target) || !!menuRef.current?.contains(target),
     () => setOpen(false),
     open,
+    ownerDocument,
   )
 
   const selectIndex = useCallback(
@@ -151,7 +154,7 @@ export default function Select<T extends string = string>({
     setActiveIndex,
     onSelect: selectIndex,
     onClose: () => setOpen(false),
-  })
+  }, ownerDocument)
 
   // 键盘移动高亮时，把对应项滚入可视区
   useEffect(() => {
@@ -255,7 +258,7 @@ export default function Select<T extends string = string>({
               })
             )}
           </div>,
-          document.body,
+          ownerDocument.body,
         )}
     </>
   )

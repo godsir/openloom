@@ -75,6 +75,7 @@ export function createMainWindow(port: number): BrowserWindow {
           autoHideMenuBar: true,
           backgroundColor: '#171717',
           title: 'AI Writing Assistant',
+          icon: getIconPath(),
           webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,
