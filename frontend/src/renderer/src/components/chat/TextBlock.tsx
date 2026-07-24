@@ -39,7 +39,13 @@ export default function TextBlock({ block }: { block: ContentBlock }) {
       copyText(text).then(() => {
         const btn = copyBtn as HTMLElement
         const original = btn.textContent
-        btn.textContent = t('common.copied', '已复制')
+        btn.textContent = t('common.copied')
+        setTimeout(() => { btn.textContent = original }, 1500)
+      }).catch(() => {
+        // 剪贴板失败（权限拒绝/焦点不在窗口）时给出失败反馈，避免假"已复制"
+        const btn = copyBtn as HTMLElement
+        const original = btn.textContent
+        btn.textContent = t('common.copyFailed')
         setTimeout(() => { btn.textContent = original }, 1500)
       })
       return

@@ -29,6 +29,7 @@ export default function ChatArea() {
   const error = sessionId ? inlineErrors.get(sessionId)?.text : null
   const scrollRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
+  const scrollRafRef = useRef<number | null>(null)
   const [showScrollBtn, setShowScrollBtn] = useState(false)
 
   // Track message count for efficient auto-scroll (avoids full array dep)
@@ -42,12 +43,28 @@ export default function ChatArea() {
   // 依赖 messages 引用本身：流式 flush 每次都替换消息数组（块内容增长，但消息数
   // 与末条块数都不变），若只依赖 [msgCount, lastMsgBlocksLen] 会在长回复流式
   // 输出时永不触发 → 视口被内容"甩开"且回底按钮不出现。滚到底后同步隐藏回底按钮。
+  // rAF 合并：同一帧内的多次流式 flush 只触发一次 scrollTop/scrollHeight（读取
+  // scrollHeight 会强制同步布局，长对话下每次 flush 都读会造成卡顿）。
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el || !autoScrollRef.current) return
-    el.scrollTop = el.scrollHeight
-    setShowScrollBtn(false)
+    if (!autoScrollRef.current || scrollRafRef.current != null) return
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null
+      const el = scrollRef.current
+      if (!el || !autoScrollRef.current) return
+      el.scrollTop = el.scrollHeight
+      setShowScrollBtn(false)
+    })
   }, [messages])
+
+  // 卸载/切会话时取消挂起的滚动帧
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current != null) {
+        cancelAnimationFrame(scrollRafRef.current)
+        scrollRafRef.current = null
+      }
+    }
+  }, [sessionId])
 
   // Reset auto-scroll flag on session switch
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { useStore } from '../../stores'
-import type { SendShortcut } from '../../stores/input'
+import type { SendShortcut, AttachedFile } from '../../stores/input'
 import { loomRpc } from '../../services/jsonrpc'
 import { streamBufferManager } from '../../services/stream-buffer'
 import { sendMessage } from '../../services/sendMessage'
@@ -12,7 +12,7 @@ import ThinkingLevelButton from './ThinkingLevelButton'
 import PermissionModeButton from './PermissionModeButton'
 import AttachedFiles from './AttachedFiles'
 import QuotedSelectionCard from './QuotedSelectionCard'
-import SlashCommandMenu, { getSlashQuery, makeBuiltinCommands } from './SlashCommandMenu'
+import SlashCommandMenu, { getSlashQuery, makeBuiltinCommands, type SlashCommand } from './SlashCommandMenu'
 import { IconImage, IconPaperclip, IconSparkles, IconX, IconCheck, IconListTodo, IconListOrdered, IconScanSearch } from '../../utils/icons'
 import { TodoPanel } from '../todo/TodoPanel'
 import { GitBranchPicker } from './GitBranchPicker'
@@ -421,6 +421,21 @@ export default function InputArea() {
     if (!useStore.getState().streamingSessionIds.has(sessionId)) {
       useStore.getState().removeStreamingSession(sessionId)
       streamBufferManager.clear(sessionId)
+    } else {
+      // 正常流程：后端会为被杀掉的 turn 补发 stream_end，由 WS 处理收尾。
+      // 若后端异常/WS 丢失导致它永远不到达，会话会永久卡在"生成中"。记录当前
+      // generation，宽限期后 buffer 仍是同一代（新 turn 会 startStream 递增
+      // generation，不会被误清）才强制收尾。
+      const sid = sessionId
+      const gen = streamBufferManager.snapshot(sid)?.generation ?? 0
+      setTimeout(() => {
+        const buf = streamBufferManager.snapshot(sid)
+        const stale = buf ? buf.generation === gen : true
+        if (stale && useStore.getState().streamingSessionIds.has(sid)) {
+          useStore.getState().removeStreamingSession(sid)
+          streamBufferManager.clear(sid)
+        }
+      }, 5000)
     }
     interruptingRef.current = false
   }

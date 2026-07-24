@@ -53,6 +53,8 @@ export default function ToolGroupBlock({ block }: { block: ContentBlock }) {
     copyText(tool.result).then(() => {
       setCopiedId(tool.id)
       setTimeout(() => setCopiedId(prev => (prev === tool.id ? null : prev)), 1500)
+    }).catch(() => {
+      // 剪贴板失败时静默即可——未进入"已复制"态，用户重试即可
     })
   }
 

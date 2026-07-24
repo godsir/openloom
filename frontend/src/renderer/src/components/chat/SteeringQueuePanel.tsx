@@ -8,8 +8,6 @@ import {
   IconTrash,
   IconEdit,
   IconX,
-  IconChevronRight,
-  IconChevronDown,
   IconGripVertical,
 } from '../../utils/icons'
 import { useLocale } from '../../i18n'
@@ -27,23 +25,10 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
   const streamingActive = useStore((s) => s.streamingSessionIds.has(sessionId))
   const panelOpen = useStore((s) => s.steeringPanelOpen)
 
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
-
-  const toggleExpand = (id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
-  }
 
   const startEdit = (id: string, text: string) => {
     setEditingId(id)
@@ -91,7 +76,7 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
     setDragOverIndex(null)
   }
 
-  const handleSendOne = useCallback(async (text: string) => {
+  const handleSendOne = useCallback(async (id: string, text: string) => {
     if (streamingActive) {
       streamBufferManager.markCancelled(sessionId)
       try {
@@ -106,9 +91,19 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
     if (streamingActive) {
       useStore.getState().removeStreamingSession(sessionId)
       streamBufferManager.clear(sessionId)
+      // clear() removes the old marker along with the buffer. Restore a
+      // generation-0 marker so a late stream_end from the stopped turn cannot
+      // terminate the replacement turn started below.
+      streamBufferManager.markCancelled(sessionId)
     }
 
-    await sendMessage(sessionId, text)
+    useStore.getState().removeSteeringItems(sessionId, [id])
+    try {
+      await sendMessage({ sessionId, content: text })
+    } catch (error) {
+      useStore.getState().addSteeringItem(sessionId, { id, text })
+      throw error
+    }
   }, [sessionId, streamingActive])
 
   const handleSendAll = useCallback(async () => {
@@ -131,9 +126,15 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
     if (streamingActive) {
       useStore.getState().removeStreamingSession(sessionId)
       streamBufferManager.clear(sessionId)
+      streamBufferManager.markCancelled(sessionId)
     }
 
-    await sendMessage(sessionId, firstItem.text)
+    try {
+      await sendMessage({ sessionId, content: firstItem.text })
+    } catch (error) {
+      useStore.getState().addSteeringItem(sessionId, firstItem)
+      throw error
+    }
   }, [sessionId, items, streamingActive])
 
   const handleRemoveOne = useCallback((id: string) => {
@@ -172,11 +173,9 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
           <div className={styles.empty}>{t('chat.steeringQueueEmpty')}</div>
         ) : (
           items.map((item, i) => {
-            const isExpanded = expandedIds.has(item.id)
             const isEditing = editingId === item.id
             const isDragging = dragIndex === i
             const isDragOver = dragOverIndex === i
-            const preview = item.text.length > 60 ? item.text.slice(0, 60) + '...' : item.text
 
             return (
               <div
@@ -189,7 +188,7 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
                 onDrop={(e) => handleDrop(e, i)}
                 onDragEnd={handleDragEnd}
               >
-                <div className={styles.itemHeader} onClick={() => !isEditing && toggleExpand(item.id)}>
+                <div className={styles.itemHeader}>
                   {!isEditing && (
                     <button className={styles.dragHandle}>
                       <IconGripVertical size={14} />
@@ -218,18 +217,15 @@ export default function SteeringQueuePanel({ sessionId }: Props) {
                     </div>
                   ) : (
                     <span className={styles.previewText}>
-                      {isExpanded ? item.text : preview}
+                      {item.text}
                     </span>
-                  )}
-                  {!isEditing && (
-                    isExpanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />
                   )}
                 </div>
 
                 <div className={styles.actions}>
                   <button
                     className={styles.sendBtn}
-                    onClick={() => handleSendOne(item.text)}
+                    onClick={() => handleSendOne(item.id, item.text)}
                     title={t('chat.steeringSendOne')}
                   >
                     <IconSend size={14} />

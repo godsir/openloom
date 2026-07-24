@@ -209,7 +209,7 @@ export async function bootstrapApp(): Promise<() => void> {
         setTimeout(() => import('./pet-sync').then(m => m.sendPetState('runLeft')), 1500)
         setTimeout(() => import('./pet-sync').then(m => m.sendPetState('idle')), 3000)
         // Native OS notification on task complete (if enabled in settings)
-        window.loom.getPreference<boolean>('taskCompleteNotification', false).then((enabled) => {
+        window.loom.getPreference<boolean>('taskCompleteNotification', false).then((enabled: boolean) => {
           if (enabled) {
             const title = 'openLoom'
             const body = t('chat.aiReplied')
@@ -436,10 +436,19 @@ export async function bootstrapApp(): Promise<() => void> {
             const remember = choice === 'approve_always'
             loomRpc('tool.respond', { call_id: callId, approved, remember }).catch((e) => {
               console.error('[perm] tool.respond failed:', e)
+              // 用户已经点了按钮但响应没到后端，工具调用会一直挂起——必须让用户感知
+              useStore.getState().addToast({
+                type: 'error',
+                message: t('permissions.respondFailed'),
+              })
             })
           }).catch(() => {
             loomRpc('tool.respond', { call_id: callId, approved: false, remember: false }).catch((e) => {
               console.error('[perm] tool.respond fallback failed:', e)
+              useStore.getState().addToast({
+                type: 'error',
+                message: t('permissions.respondFailed'),
+              })
             })
           })
         }
@@ -448,7 +457,7 @@ export async function bootstrapApp(): Promise<() => void> {
       case 'agent.state_changed':
         loomRpc('agent.config.list').then((r: any) =>
           useStore.getState().setAgents(r.configs || [])
-        ).catch(() => {})
+        ).catch((e) => console.warn('[agent.state_changed] config.list failed:', e))
         break
       case 'todo.list_replaced':
         useStore.getState().handleTodoReplaced((p?.todos as any[]) || [])

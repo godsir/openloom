@@ -2,6 +2,7 @@ import { useStore } from '../../stores'
 import { useLocale } from '../../i18n'
 import { loomRpc } from '../../services/jsonrpc'
 import { sendMessage } from '../../services/sendMessage'
+import { streamBufferManager } from '../../services/stream-buffer'
 import { copyText } from '../../services/clipboard'
 import { IconCopy, IconTrash, IconRefresh, IconRotateCcw } from '../../utils/icons'
 import type { ContentBlock } from '../../stores/chat'
@@ -89,6 +90,9 @@ export default function MessageFooterActions({ messageId, role, timestamp, sessi
       })),
     ]
 
+    // 防御：streaming prop 可能有滞后。若上一个 turn 的 stream_end 迟来，
+    // 没有 cancelled 标记它会被当成新 turn 的结束事件，误杀本次重发。
+    streamBufferManager.markCancelled(effectiveSessionId)
     await sendMessage({ sessionId: effectiveSessionId, content, attachedFiles })
   }
 
@@ -125,6 +129,7 @@ export default function MessageFooterActions({ messageId, role, timestamp, sessi
       })),
     ]
 
+    streamBufferManager.markCancelled(effectiveSessionId)
     await sendMessage({ sessionId: effectiveSessionId, content, attachedFiles, skipUserMessage: true })
   }
 

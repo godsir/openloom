@@ -631,6 +631,11 @@ class StreamBufferManager {
       console.error('[autoSendPendingSteering] sendMessage failed', e)
       // On failure, restore the first item back to the queue.
       useStore.getState().addSteeringItem(sessionId, firstItem)
+      // 让用户感知失败——否则条目悄悄回到队列，用户会困惑为什么没发出去
+      useStore.getState().addToast({
+        type: 'error',
+        message: t('chat.steerAutoSendFailed'),
+      })
     }
   }
 
@@ -1020,7 +1025,15 @@ class StreamBufferManager {
   /** Trigger deferred auto-send if the session has pending steering items that were
    *  waiting for memory extraction to complete. Called from memory.updated handler. */
   triggerDeferredSteering(sessionId: string): void {
-    if (this.deferredSteeringSessions.has(sessionId)) {
+    const hasPendingItems =
+      (useStore.getState().steeringQueueItems[sessionId]?.length ?? 0) > 0
+    // memory.updated can race slightly ahead of chat.stream_end. Normally the
+    // deferred marker is already present; if it was lost but the old stream
+    // buffer is gone, the pending queue itself is sufficient evidence to send.
+    if (
+      this.deferredSteeringSessions.has(sessionId) ||
+      (hasPendingItems && !this.hasBuffer(sessionId))
+    ) {
       console.log('[triggerDeferredSteering] memory extraction complete, triggering autoSend', { sessionId })
       this.deferredSteeringSessions.delete(sessionId)
       void this.autoSendPendingSteering(sessionId)
