@@ -1,7 +1,7 @@
 {
   "name": "openloom-desktop",
   "version": "0.4.33",
-  "description": "openLoom 鈥?local-first private AI assistant",
+  "description": "openLoom 閳?local-first private AI assistant",
   "author": "openLoom Contributors",
   "main": "./out/main/index.js",
   "scripts": {
@@ -12,6 +12,7 @@
     "package:updater": "node scripts/package.js",
     "typecheck": "tsc --noEmit -p tsconfig.web.json",
     "test": "vitest",
+    "postinstall": "electron-builder install-app-deps",
     "test:e2e": "playwright test"
   },
   "dependencies": {
