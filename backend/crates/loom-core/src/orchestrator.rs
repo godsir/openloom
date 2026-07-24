@@ -359,6 +359,8 @@ pub struct Orchestrator {
     /// Per-session steering queues — user guidance pending injection into agent loop.
     /// Each entry holds the entries for one session, consumed FIFO at each iteration.
     session_steering_queues: RwLock<HashMap<String, Arc<RwLock<Vec<crate::event_bus::SteeringItem>>>>>,
+    /// Local-model context-window prober (LM Studio / Ollama), per-process cached.
+    context_probe: crate::context_probe::ContextProbe,
 }
 
 /// Trait for memory backends (SqliteEventStore, etc.)
@@ -1155,6 +1157,7 @@ Do NOT search the filesystem or use file/process tools for loom configuration ta
             session_todos: RwLock::new(HashMap::new()),
             memory_disabled_sessions: RwLock::new(HashSet::new()),
             session_steering_queues: RwLock::new(HashMap::new()),
+            context_probe: crate::context_probe::ContextProbe::new(),
         }
     }
 
@@ -4537,6 +4540,40 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         });
     }
 
+    /// Resolve the effective context window for a model config.
+    ///
+    /// Priority: explicit user-configured context_size (< 100K is treated as
+    /// deliberate) → for local inference at the 100K default (i.e. never
+    /// configured), probe the server for the real window → conservative 8K
+    /// fallback. The 100K default would otherwise silently disable every
+    /// window guard (summarizer, mid-turn compaction, history budget) and
+    /// surface as provider-side context-overflow errors on small local models.
+    pub(crate) async fn resolve_context_window(
+        &self,
+        cfg: &loom_types::ModelConfig,
+    ) -> usize {
+        let configured = cfg.context_size;
+        if configured > 0 && configured < 100_000 {
+            return configured;
+        }
+        if cfg.backend.is_local_inference() {
+            if let Some(probed) = self.context_probe.context_window(cfg).await {
+                return probed;
+            }
+            tracing::warn!(
+                model = %cfg.name,
+                fallback = crate::context_probe::LOCAL_FALLBACK_CONTEXT,
+                "本地模型上下文窗口未知且探测失败，按保守值估计；建议在模型设置中显式配置 context_size"
+            );
+            return crate::context_probe::LOCAL_FALLBACK_CONTEXT;
+        }
+        if configured > 0 {
+            configured
+        } else {
+            100_000
+        }
+    }
+
     /// Process a user message with a specific session and agent config.
     /// Uses the Agent state machine: Idle → Thinking → Completed (or Errored).
     /// `attached_images` are ContentPart::Image items to send directly to the model.
@@ -5000,6 +5037,18 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             (existing_summary, summary_at_count)
         };
 
+        // Fetch the active model config once — drives max_tokens and the
+        // context-window resolution below.
+        let active_model_cfg = {
+            let name = self
+                .active_model_name
+                .read()
+                .await
+                .clone()
+                .unwrap_or_default();
+            self.model_configs.read().await.get(&name).cloned()
+        };
+
         let loop_config = AgentLoopConfig {
             system_prompt: stable_prompt,
             dynamic_context,
@@ -5023,43 +5072,27 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             // calls (file_write with multi-KB content) while still bounding runaway
             // loops; with skills active (often generating large files), let the model
             // use its own default.
-            max_tokens: {
-                let name = self
-                    .active_model_name
-                    .read()
-                    .await
-                    .clone()
-                    .unwrap_or_default();
-                self.model_configs
-                    .read()
-                    .await
-                    .get(&name)
-                    .and_then(|c| c.max_output_tokens.filter(|n| *n > 0))
-                    .unwrap_or(if effective_selected_skills.is_empty() {
-                        32768
-                    } else {
-                        0
-                    })
-            },
+            max_tokens: active_model_cfg
+                .as_ref()
+                .and_then(|c| c.max_output_tokens.filter(|n| *n > 0))
+                .unwrap_or(if effective_selected_skills.is_empty() {
+                    32768
+                } else {
+                    0
+                }),
             thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),
             active_model_name: self.active_model_name.read().await.clone(),
             workspace_path: workspace_path.clone(),
             default_permissions,
             max_prompt_budget,
-            context_window: {
-                let name = self
-                    .active_model_name
-                    .read()
-                    .await
-                    .clone()
-                    .unwrap_or_default();
-                self.model_configs
-                    .read()
-                    .await
-                    .get(&name)
-                    .map(|c| c.context_size)
-                    .filter(|s| *s > 0)
+            // Resolved context window: explicit user config wins; for local
+            // models at the 100K default (i.e. never configured), probe the
+            // server for the real window, else fall back to a conservative
+            // 8K so the window guards actually engage.
+            context_window: match &active_model_cfg {
+                Some(cfg) => Some(self.resolve_context_window(cfg).await),
+                None => None,
             },
             summary_at_count: new_at_count,
             session_id: session_id.to_string(),
@@ -6407,6 +6440,19 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
         let continuation_note =
             Self::continuation_note_for(self.get_last_stop_reason(session_id).await, None);
 
+        // Fetch the active model config once — drives max_tokens and the
+        // context-window resolution below (probe local servers when the
+        // context size was never configured).
+        let active_model_cfg = {
+            let name = self
+                .active_model_name
+                .read()
+                .await
+                .clone()
+                .unwrap_or_default();
+            self.model_configs.read().await.get(&name).cloned()
+        };
+
         let config = AgentLoopConfig {
             system_prompt: stable_prompt,
             dynamic_context,
@@ -6420,19 +6466,9 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             workspace_path: workspace_path.clone(),
             default_permissions,
             max_prompt_budget,
-            context_window: {
-                let name = self
-                    .active_model_name
-                    .read()
-                    .await
-                    .clone()
-                    .unwrap_or_default();
-                self.model_configs
-                    .read()
-                    .await
-                    .get(&name)
-                    .map(|c| c.context_size)
-                    .filter(|s| *s > 0)
+            context_window: match &active_model_cfg {
+                Some(cfg) => Some(self.resolve_context_window(cfg).await),
+                None => None,
             },
             summary_at_count: new_at_count,
             session_id: session_id.to_string(),
@@ -6444,12 +6480,16 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             event_bus: Some(self.pool.event_bus().clone()),
             pending_permissions: Some(self.pending_permissions.clone()),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
-            // Bump output budget when skills are active.
-            max_tokens: if effective_selected_skills.is_empty() {
-                4096
-            } else {
-                0
-            },
+            // User-configured max_output_tokens wins; otherwise bump output
+            // budget when skills are active.
+            max_tokens: active_model_cfg
+                .as_ref()
+                .and_then(|c| c.max_output_tokens.filter(|n| *n > 0))
+                .unwrap_or(if effective_selected_skills.is_empty() {
+                    4096
+                } else {
+                    0
+                }),
             // When selected_skills is non-empty, bypass lazy_tools so the LLM can
             // act on skill instructions immediately without a request_tools round-trip.
             lazy_tools: false,

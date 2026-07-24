@@ -808,6 +808,153 @@ pub async fn run_agent_turn_with_images(
     .await
 }
 
+// ── Slim: window-aware graduated context slimming ──────────────────────────
+
+/// Per-turn slim plan: the tier plus whether tools ride the text protocol
+/// (compact catalog in the system prefix, no JSON schemas in the request —
+/// inline-JSON calls are still parsed and executed server-side).
+#[derive(Debug, Clone, Copy)]
+struct SlimPlan {
+    level: crate::slim::SlimLevel,
+    text_tool_protocol: bool,
+}
+
+fn plan_slim(config: &AgentLoopConfig) -> SlimPlan {
+    let level = crate::slim::slim_level(config.compact_mode(), config.effective_context_window());
+    let function_calling = config
+        .model_configs
+        .iter()
+        .find(|c| Some(c.name.as_str()) == config.active_model_name.as_deref())
+        .map(|c| c.capabilities.function_calling)
+        .unwrap_or(false);
+    SlimPlan {
+        level,
+        text_tool_protocol: level == crate::slim::SlimLevel::Slim && !function_calling,
+    }
+}
+
+/// Tier-conditional filtering/minification of the tool list. This list is the
+/// EXECUTION set — inline calls dispatch against it even when the request
+/// carries no schemas (text-protocol mode).
+fn prepare_tools(
+    registry: &ToolRegistry,
+    config: &AgentLoopConfig,
+    allowed_tools: &Option<Vec<String>>,
+    disallowed_tools: &Option<Vec<String>>,
+    plan: &SlimPlan,
+) -> Vec<loom_types::ToolDefinition> {
+    let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
+    // If active skills restrict tools, filter to the union of their allowed_tools.
+    if let Some(ref allowlist) = config.skill_tool_allowlist {
+        let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
+        tools.retain(|t| allowed_set.contains(t.name.as_str()));
+    }
+    match plan.level {
+        crate::slim::SlimLevel::Full => {}
+        crate::slim::SlimLevel::Slim => {
+            tools.retain(|t| crate::slim::CORE_SLIM_TOOLS.contains(&t.name.as_str()));
+            tools = tools.iter().map(crate::slim::minify_tool_definition).collect();
+        }
+        // Tiny（含手动 compact_mode）：不挂工具（省掉全套工具 schema）
+        crate::slim::SlimLevel::Tiny => tools.clear(),
+    }
+    tools
+}
+
+/// Slim-aware persona for both assembly and prefix-digest computation —
+/// the digest must hash what the prefix actually contains.
+fn slim_persona(config: &AgentLoopConfig, level: crate::slim::SlimLevel) -> Option<String> {
+    match level {
+        crate::slim::SlimLevel::Full => config.persona.clone(),
+        crate::slim::SlimLevel::Slim => config
+            .persona
+            .as_ref()
+            .map(|p| crate::slim::truncate_chars(p, 500)),
+        crate::slim::SlimLevel::Tiny => None,
+    }
+}
+
+/// Text-protocol catalog for both assembly and prefix-digest computation.
+fn slim_tool_catalog(plan: &SlimPlan, tools: &[loom_types::ToolDefinition]) -> Option<String> {
+    if plan.text_tool_protocol && !tools.is_empty() {
+        Some(crate::slim::build_text_tool_catalog(tools))
+    } else {
+        None
+    }
+}
+
+fn system_msg(text: String) -> Message {
+    Message {
+        role: Role::System,
+        content: vec![ContentPart::Text { text }],
+        timestamp: chrono::Utc::now(),
+        usage: None,
+    }
+}
+
+/// Assemble the turn's messages: stable prefix (assembler) + tier-aware
+/// injections (few-shots / dynamic context / todo / continuation) placed
+/// after index 0 with a running cursor — immune to level-conditional gaps
+/// that the old per-block insert_pos arithmetic was fragile against.
+fn assemble_turn_messages(
+    config: &AgentLoopConfig,
+    history: &[Message],
+    plan: &SlimPlan,
+    tools: &[loom_types::ToolDefinition],
+) -> Result<Vec<Message>> {
+    let cw = config.effective_context_window();
+    let history_budget = (cw as f32 * 0.25) as usize;
+    let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
+    let opts = AssembleOptions {
+        persona: slim_persona(config, plan.level),
+        summary: config.summary.clone(),
+        kg_context: config.kg_context.clone(),
+        tool_catalog: slim_tool_catalog(plan, tools),
+        history: history.to_vec(),
+        summary_at_count: config.summary_at_count,
+    };
+    let mut messages = assembler.build(opts)?;
+
+    let mut pos = 1usize;
+    // Few-shot examples — Full only (they are the most expendable).
+    if plan.level == crate::slim::SlimLevel::Full {
+        for shot in &config.few_shots {
+            messages.insert(pos, system_msg(shot.clone()));
+            pos += 1;
+        }
+    }
+    // Dynamic context (skills, KG, workspace) — Full intact, Slim truncated,
+    // Tiny dropped. Kept out of the stable prefix for KV-cache stability.
+    if let Some(ref dc) = config.dynamic_context
+        && !dc.is_empty()
+    {
+        let text = match plan.level {
+            crate::slim::SlimLevel::Full => dc.clone(),
+            crate::slim::SlimLevel::Slim => crate::slim::truncate_chars(dc, 1500),
+            crate::slim::SlimLevel::Tiny => String::new(),
+        };
+        if !text.is_empty() {
+            messages.insert(pos, system_msg(text));
+            pos += 1;
+        }
+    }
+    // Todo context — small and steers continuation; kept except Tiny.
+    if let Some(ref tc) = config.todo_context
+        && !tc.is_empty()
+        && plan.level != crate::slim::SlimLevel::Tiny
+    {
+        messages.insert(pos, system_msg(tc.clone()));
+        pos += 1;
+    }
+    // Continuation note — always kept (short, semantically vital).
+    if let Some(ref note) = config.continuation_note
+        && !note.is_empty()
+    {
+        messages.insert(pos, system_msg(note.clone()));
+    }
+    Ok(messages)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_agent_turn_inner(
     client: &dyn CloudClient,
@@ -821,108 +968,10 @@ async fn run_agent_turn_inner(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
-    let mut tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
-    // If active skills restrict tools, filter to the union of their allowed_tools.
-    if let Some(ref allowlist) = config.skill_tool_allowlist {
-        let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
-        tools.retain(|t| allowed_set.contains(t.name.as_str()));
-    }
-    // 精简模式：不挂工具（本地小窗口场景不调工具，省掉全套工具 schema）
-    if config.compact_mode() {
-        tools.clear();
-    }
-    let keep_recent_pct = 0.25_f32;
+    let plan = plan_slim(config);
+    let tools = prepare_tools(registry, config, allowed_tools, disallowed_tools, &plan);
     let cw = config.effective_context_window();
-    let history_budget = (cw as f32 * keep_recent_pct) as usize;
-    let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
-    let opts = AssembleOptions {
-        persona: if config.compact_mode() { None } else { config.persona.clone() },
-        summary: config.summary.clone(),
-        kg_context: config.kg_context.clone(),
-        tool_catalog: None,
-        history: history.to_vec(),
-        summary_at_count: config.summary_at_count,
-    };
-    let mut messages = assembler.build(opts)?;
-    // Inject few-shot examples as additional system messages after the stable
-    // prefix (index 0) — each shot becomes a separate System message.
-    if !config.few_shots.is_empty() && !config.compact_mode() {
-        for (i, shot) in config.few_shots.iter().enumerate() {
-            messages.insert(
-                1 + i,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: shot.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
-    }
-    // Inject dynamic context (skills, KG, workspace) as additional system
-    // messages AFTER the stable prefix and few-shot examples — keeping
-    // frequently-changing content out of the KV-cache so cache hit rates
-    // stay high across turns.
-    if let Some(ref dc) = config.dynamic_context
-        && !dc.is_empty()
-        && !config.compact_mode() {
-            let insert_pos = 1 + config.few_shots.len();
-            messages.insert(
-                insert_pos,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: dc.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
-    // Inject todo context (after dynamic_context, before user/assistant history)
-    if let Some(ref tc) = config.todo_context
-        && !tc.is_empty()
-        && !config.compact_mode() {
-            let insert_pos = 1
-                + config.few_shots.len()
-                + config
-                    .dynamic_context
-                    .as_ref()
-                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
-            messages.insert(
-                insert_pos,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: tc.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
-    // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
-    if let Some(ref note) = config.continuation_note
-        && !note.is_empty() {
-            let insert_pos = if config.compact_mode() {
-                1
-            } else {
-                1 + config.few_shots.len()
-                    + config
-                        .dynamic_context
-                        .as_ref()
-                        .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
-                    + config
-                        .todo_context
-                        .as_ref()
-                        .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 })
-            };
-            messages.insert(
-                insert_pos,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: note.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
+    let mut messages = assemble_turn_messages(config, history, &plan, &tools)?;
     // Strip images from history — they were already processed by the vision
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
@@ -1071,14 +1120,18 @@ async fn run_agent_turn_inner(
     };
 
     // ── Prefix digest: compute SHA256 fingerprint of stable prefix ──
-    let digest = assembler.compute_prefix_digest(&AssembleOptions {
-        persona: if config.compact_mode() { None } else { config.persona.clone() },
-        summary: config.summary.clone(),
-        kg_context: config.kg_context.clone(),
-        tool_catalog: None,
-        history: vec![],
-        summary_at_count: 0,
-    });
+    let digest = {
+        let digest_assembler =
+            ContextAssembler::new(&config.system_prompt, (cw as f32 * 0.25) as usize);
+        digest_assembler.compute_prefix_digest(&AssembleOptions {
+            persona: slim_persona(config, plan.level),
+            summary: config.summary.clone(),
+            kg_context: config.kg_context.clone(),
+            tool_catalog: slim_tool_catalog(&plan, &tools),
+            history: vec![],
+            summary_at_count: 0,
+        })
+    };
     client.set_prefix_digest(Some(digest.clone()));
     tracing::info!(
         prefix_hash = %&digest.combined_hash[..12],
@@ -1312,8 +1365,23 @@ async fn run_agent_turn_inner(
         let strip_tools_for_images = images_in_call
             && !main_model_has_vision(&config.model_configs, &config.active_model_name);
 
+        // Pre-flight window guard: count the assembled prompt with the real
+        // tokenizer and trim (history → injected dynamic context → oversized
+        // tool outputs) instead of dying on a provider-side context-overflow.
+        let preflight = crate::slim::preflight_trim(
+            &mut messages,
+            if plan.text_tool_protocol { &[] } else { &tools },
+            cw,
+            config.max_tokens,
+            config.tokenizer_for_active_model(),
+        );
+        if !preflight.is_clean() {
+            sanitize_message_sequence(&mut messages);
+            tracing::info!(?preflight, "pre-flight prompt trim applied");
+        }
+
         let mut response = loop {
-            let effective_tools = if strip_tools_for_images || force_no_tools {
+            let effective_tools = if strip_tools_for_images || force_no_tools || plan.text_tool_protocol {
                 Vec::new()
             } else {
                 tools.clone()
@@ -1787,17 +1855,9 @@ async fn run_agent_turn_streaming_inner(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<TurnResult> {
     client.prefix_cache_reset();
-    let mut all_tools = registry.filtered_definitions(allowed_tools, disallowed_tools);
-    // If active skills restrict tools, filter to the union of their allowed_tools.
-    if let Some(ref allowlist) = config.skill_tool_allowlist {
-        let allowed_set: HashSet<&str> = allowlist.iter().map(|s| s.as_str()).collect();
-        all_tools.retain(|t| allowed_set.contains(t.name.as_str()));
-    }
-    // 精简模式：不挂工具（本地小窗口场景不调工具，省掉全套工具 schema）
-    if config.compact_mode() {
-        all_tools.clear();
-    }
-    let mut tools = if config.lazy_tools {
+    let plan = plan_slim(config);
+    let all_tools = prepare_tools(registry, config, allowed_tools, disallowed_tools, &plan);
+    let mut tools = if config.lazy_tools && !plan.text_tool_protocol {
         // Include use_skill in initial tools so the LLM can directly invoke
         // skills from the Available Skills list without an extra request_tools hop.
         let mut initial = vec![request_tools_definition()];
@@ -1808,98 +1868,21 @@ async fn run_agent_turn_streaming_inner(
     } else {
         all_tools.clone()
     };
-    let keep_recent_pct = 0.25_f32;
     let cw = config.effective_context_window();
-    let history_budget = (cw as f32 * keep_recent_pct) as usize;
-    let assembler = ContextAssembler::new(&config.system_prompt, history_budget);
-    let opts = AssembleOptions {
-        persona: if config.compact_mode() { None } else { config.persona.clone() },
-        summary: config.summary.clone(),
-        kg_context: config.kg_context.clone(),
-        tool_catalog: None,
-        history: history.to_vec(),
-        summary_at_count: config.summary_at_count,
-    };
-    let mut messages = assembler.build(opts)?;
-    // Inject few-shot examples as additional system messages after the stable
-    // prefix (index 0) — each shot becomes a separate System message.
-    if !config.few_shots.is_empty() && !config.compact_mode() {
-        for (i, shot) in config.few_shots.iter().enumerate() {
-            messages.insert(
-                1 + i,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: shot.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
+    let mut messages = assemble_turn_messages(config, history, &plan, &tools)?;
+    // 小窗口提示（一次性，走 thinking 通道不污染正文）
+    if plan.level != crate::slim::SlimLevel::Full {
+        let note = match plan.level {
+            crate::slim::SlimLevel::Slim if plan.text_tool_protocol => {
+                format!("[小窗口模式：已精简上下文，{} 个核心工具以文本协议提供]", tools.len())
+            }
+            crate::slim::SlimLevel::Slim => {
+                format!("[小窗口模式：已精简上下文，保留 {} 个核心工具]", tools.len())
+            }
+            _ => "[精简模式：仅保留核心对话能力]".to_string(),
+        };
+        let _ = delta_tx.send(StreamDelta::Reasoning(note)).await;
     }
-    // Inject dynamic context (skills, KG, workspace) as additional system
-    // messages AFTER the stable prefix and few-shot examples — keeping
-    // frequently-changing content out of the KV-cache so cache hit rates
-    // stay high across turns.
-    if let Some(ref dc) = config.dynamic_context
-        && !dc.is_empty()
-        && !config.compact_mode() {
-            let insert_pos = 1 + config.few_shots.len();
-            messages.insert(
-                insert_pos,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: dc.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
-    // Inject continuation note — tells LLM the user cancelled and is now giving follow-up
-    if let Some(ref note) = config.continuation_note
-        && !note.is_empty() {
-            let insert_pos = if config.compact_mode() {
-                1
-            } else {
-                1 + config.few_shots.len()
-                    + config
-                        .dynamic_context
-                        .as_ref()
-                        .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 })
-                    + config
-                        .todo_context
-                        .as_ref()
-                        .map_or(0, |tc| if tc.is_empty() { 0 } else { 1 })
-            };
-            messages.insert(
-                insert_pos,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: note.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
-    // Inject todo context (after dynamic_context, before user/assistant history)
-    if let Some(ref tc) = config.todo_context
-        && !tc.is_empty()
-        && !config.compact_mode() {
-            let insert_pos = 1
-                + config.few_shots.len()
-                + config
-                    .dynamic_context
-                    .as_ref()
-                    .map_or(0, |dc| if dc.is_empty() { 0 } else { 1 });
-            messages.insert(
-                insert_pos,
-                Message {
-                    role: Role::System,
-                    content: vec![ContentPart::Text { text: tc.clone() }],
-                    timestamp: chrono::Utc::now(),
-                    usage: None,
-                },
-            );
-        }
     // Strip images from history — they were already processed by the vision
     // model in their original turn. Only the current user message's images
     // (appended below) should trigger vision auxiliary processing.
@@ -2121,14 +2104,18 @@ async fn run_agent_turn_streaming_inner(
     };
 
     // ── Prefix digest (streaming): compute SHA256 fingerprint of stable prefix ──
-    let digest = assembler.compute_prefix_digest(&AssembleOptions {
-        persona: if config.compact_mode() { None } else { config.persona.clone() },
-        summary: config.summary.clone(),
-        kg_context: config.kg_context.clone(),
-        tool_catalog: None,
-        history: vec![],
-        summary_at_count: 0,
-    });
+    let digest = {
+        let digest_assembler =
+            ContextAssembler::new(&config.system_prompt, (cw as f32 * 0.25) as usize);
+        digest_assembler.compute_prefix_digest(&AssembleOptions {
+            persona: slim_persona(config, plan.level),
+            summary: config.summary.clone(),
+            kg_context: config.kg_context.clone(),
+            tool_catalog: slim_tool_catalog(&plan, &tools),
+            history: vec![],
+            summary_at_count: 0,
+        })
+    };
     client.set_prefix_digest(Some(digest.clone()));
     tracing::info!(
         prefix_hash = %&digest.combined_hash[..12],
@@ -2361,6 +2348,27 @@ async fn run_agent_turn_streaming_inner(
         let strip_tools_for_images = images_in_call
             && !main_model_has_vision(&config.model_configs, &config.active_model_name);
 
+        // Pre-flight window guard: count the assembled prompt with the real
+        // tokenizer and trim (history → injected dynamic context → oversized
+        // tool outputs) instead of dying on a provider-side context-overflow.
+        let preflight = crate::slim::preflight_trim(
+            &mut messages,
+            if plan.text_tool_protocol { &[] } else { &tools },
+            cw,
+            config.max_tokens,
+            config.tokenizer_for_active_model(),
+        );
+        if !preflight.is_clean() {
+            sanitize_message_sequence(&mut messages);
+            tracing::info!(?preflight, "pre-flight prompt trim applied");
+            let _ = delta_tx
+                .send(StreamDelta::Reasoning(format!(
+                    "[上下文预检：{}]",
+                    preflight.describe()
+                )))
+                .await;
+        }
+
         let mut pending_tool_calls: Vec<(usize, String, String, String)> = Vec::new();
         let mut this_text = String::new();
         let mut this_thinking = String::new();
@@ -2378,7 +2386,7 @@ async fn run_agent_turn_streaming_inner(
         // ... is supported for image response". Detect and retry without tools.
         // Also retries transient errors (rate limiting, 5xx, network) with backoff.
         loop {
-            let effective_tools = if strip_tools_for_images || force_no_tools {
+            let effective_tools = if strip_tools_for_images || force_no_tools || plan.text_tool_protocol {
                 Vec::new()
             } else {
                 tools.clone()
