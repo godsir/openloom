@@ -14,6 +14,17 @@ import Database from 'better-sqlite3'
 import { IMStore, IMGatewayManager } from './im'
 import { ImBridge } from './im/imBridge'
 
+// A main process orphaned from its launching terminal must not crash on
+// stdio writes: once the parent terminal dies, console.* writes throw EPIPE
+// and surface as an uncaught-exception dialog (observed when a dev instance
+// outlives its `npm run dev` parent and a config-watcher tick logs through a
+// dead pipe). Swallow EPIPE only; anything else still throws.
+for (const std of [process.stdout, process.stderr]) {
+  std.on('error', (err: NodeJS.ErrnoException) => {
+    if (err?.code !== 'EPIPE') throw err
+  })
+}
+
 // Windows tuning.
 if (process.platform === 'win32') {
   // Required for native Windows toast notifications (Notification API).
