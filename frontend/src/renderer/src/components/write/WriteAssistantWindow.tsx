@@ -36,6 +36,20 @@ export const WriteAssistantWindow: React.FC<WriteAssistantWindowProps> = ({
   children,
 }) => {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
+  const onCloseRef = React.useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Poll for popup closed ¡ª catches cases where beforeunload doesn't fire
+  // (e.g. main process closes window via IPC, OS force-close, etc.)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(timer)
+        onCloseRef.current()
+      }
+    }, 500)
+    return () => clearInterval(timer)
+  }, [popup])
 
   useEffect(() => {
     const pendingClose = pendingCloseTimers.get(popup)
