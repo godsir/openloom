@@ -64,6 +64,15 @@ async function saveCustomProviders(entries: ProviderEntry[]): Promise<void> {
   await window.loom.setPreference(CUSTOM_PROVIDERS_KEY, custom)
 }
 
+function customProviderEnvVar(label: string): string {
+  const prefix = label
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase()
+  return `${prefix || 'CUSTOM'}_API_KEY`
+}
+
 function buildProviders(customProviders: ProviderEntry[], models: ModelListItem[]): ProviderEntry[] {
   const seenLabels = new Set(customProviders.map(c => c.label))
   const discovered: ProviderEntry[] = []
@@ -77,6 +86,7 @@ function buildProviders(customProviders: ProviderEntry[], models: ModelListItem[
         defaultUrl: m.base_url || '',
         apiFormat: m.api_format === 'anthropic' ? 'anthropic' : 'openai',
         isCustom: true,
+        envVar: m.api_key_env || customProviderEnvVar(m.backend_label),
       })
     }
   }
@@ -100,7 +110,7 @@ export default function ModelConfigPanel() {
   const [customName, setCustomName] = useState('')
   const [customUrl, setCustomUrl] = useState('')
   const [customFormat, setCustomFormat] = useState<'openai' | 'anthropic'>('openai')
-  const [customEnvVar, setCustomEnvVar] = useState('OPENLOOM_API_KEY')
+  const [customEnvVar, setCustomEnvVar] = useState('')
 
   // Per-provider state
   const [apiKey, setApiKey] = useState('')
@@ -184,7 +194,7 @@ export default function ModelConfigPanel() {
       if (fmt === 'openai' || fmt === 'anthropic') setApiFormat(fmt)
     }
     try {
-      const envName = p.isCustom ? (p.envVar || 'OPENLOOM_API_KEY') : undefined
+      const envName = p.isCustom ? (p.envVar || customProviderEnvVar(p.label)) : undefined
       const result = await loomRpc<{ set: boolean; env_name: string }>('model.check_key', {
         backend: p.backend,
         api_key_env: envName,
@@ -203,7 +213,9 @@ export default function ModelConfigPanel() {
         backend: selected.backend,
         api_key: apiKey.trim(),
         base_url: normalizeBaseUrl(baseUrl, apiFormat),
-        api_key_env: selected.isCustom ? selected.envVar : undefined,
+        api_key_env: selected.isCustom
+          ? (selected.envVar || customProviderEnvVar(selected.label))
+          : undefined,
         backend_label: selected.backend === 'Custom' ? selected.label : undefined,
       })
       useStore.getState().addToast({ type: 'success', message: t('modelPanel.apiKeySavedMsg', { env: result.env_name }) })
@@ -280,7 +292,9 @@ export default function ModelConfigPanel() {
         backend: selected.backend,
         base_url: normalizeBaseUrl(baseUrl, apiFormat),
         api_format: apiFormat,
-        api_key_env: selected.isCustom ? selected.envVar : undefined,
+        api_key_env: selected.isCustom
+          ? (selected.envVar || customProviderEnvVar(selected.label))
+          : undefined,
       })
       setDiscovered(result.models || [])
     } catch (e: any) {
@@ -450,7 +464,7 @@ export default function ModelConfigPanel() {
     setCustomName(entry.label)
     setCustomUrl(entry.defaultUrl)
     setCustomFormat(entry.apiFormat)
-    setCustomEnvVar(entry.envVar || 'OPENLOOM_API_KEY')
+    setCustomEnvVar(entry.envVar || customProviderEnvVar(entry.label))
     setShowCustomForm(true)
     setSelectedId(entry.id)
     setBaseUrl(entry.defaultUrl)
@@ -470,7 +484,7 @@ export default function ModelConfigPanel() {
           label: newLabel,
           defaultUrl: customUrl.trim(),
           apiFormat: customFormat,
-          envVar: customEnvVar.trim() || 'OPENLOOM_API_KEY',
+          envVar: customEnvVar.trim() || customProviderEnvVar(newLabel),
         } : p
       )
       setProviders(next)
@@ -503,7 +517,7 @@ export default function ModelConfigPanel() {
       setCustomName('')
       setCustomUrl('')
       setCustomFormat('openai')
-      setCustomEnvVar('OPENLOOM_API_KEY')
+      setCustomEnvVar('')
       await refresh()
       useStore.getState().addToast({ type: 'success', message: t('modelPanel.providerUpdated', { label: newLabel }) })
       return
@@ -517,7 +531,7 @@ export default function ModelConfigPanel() {
       defaultUrl: customUrl.trim(),
       apiFormat: customFormat,
       isCustom: true,
-      envVar: customEnvVar.trim() || 'OPENLOOM_API_KEY',
+      envVar: customEnvVar.trim() || customProviderEnvVar(customName),
     }
     const next = [...providers, entry]
     setProviders(next)
@@ -533,7 +547,7 @@ export default function ModelConfigPanel() {
     setCustomName('')
     setCustomUrl('')
     setCustomFormat('openai')
-    setCustomEnvVar('OPENLOOM_API_KEY')
+    setCustomEnvVar('')
     try {
       const result = await loomRpc<{ set: boolean; env_name: string }>('model.check_key', {
         backend: 'Custom',
@@ -682,7 +696,7 @@ export default function ModelConfigPanel() {
               className={styles.pvCustomInput}
             />
             <div className={styles.pvCustomActions}>
-              <button onClick={() => { setShowCustomForm(false); setEditingCustomId(null); setCustomName(''); setCustomUrl(''); setCustomFormat('openai'); setCustomEnvVar('OPENLOOM_API_KEY') }} className={styles.pvCustomBtn}>{t('common.cancel')}</button>
+              <button onClick={() => { setShowCustomForm(false); setEditingCustomId(null); setCustomName(''); setCustomUrl(''); setCustomFormat('openai'); setCustomEnvVar('') }} className={styles.pvCustomBtn}>{t('common.cancel')}</button>
               <button onClick={handleAddCustom} disabled={!customName.trim() || !customUrl.trim()} className={styles.pvCustomBtnPrimary}>{editingCustomId ? t('common.save') : t('common.edit')}</button>
             </div>
           </div>

@@ -73,16 +73,6 @@ fn backend_default_base_url(backend: &ModelBackend) -> &'static str {
     }
 }
 
-/// Derive a default API key environment variable name from the backend.
-fn backend_default_key_env(backend: &ModelBackend) -> &'static str {
-    match backend {
-        ModelBackend::DeepSeek => "DEEPSEEK_API_KEY",
-        ModelBackend::OpenAI => "OPENAI_API_KEY",
-        ModelBackend::Anthropic => "ANTHROPIC_API_KEY",
-        _ => "OPENLOOM_API_KEY",
-    }
-}
-
 async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, JsonRpcError> {
     let prefix_raw = p.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
     let suffix_raw = p.get("suffix").and_then(|v| v.as_str()).unwrap_or("");
@@ -135,18 +125,19 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
 
     // 4. API key priority:
     //    a) Request param (frontend override)
-    //    b) FIM config env name → key_store lookup
-    //    c) Model config env name → key_store lookup
-    //    d) Backend-based default env name → key_store lookup
-    let api_key = p
+    //    b) FIM config key reference
+    //    c) Model config key reference
+    // The shared resolver also handles literal keys, the process environment,
+    // persisted credentials and backend-specific defaults.
+    let request_api_key = p
         .get("api_key")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty());
 
-    let api_key: String = match api_key {
+    let api_key = match request_api_key {
         Some(k) => k.to_string(),
         None => {
-            let env_name = saved_fim_key_env
+            let key_reference = saved_fim_key_env
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .or_else(|| {
@@ -155,17 +146,23 @@ async fn handle_completion_fim(state: &AppState, p: &Value) -> Result<Value, Jso
                     } else {
                         None
                     }
-                })
-                .unwrap_or_else(|| backend_default_key_env(&config_backend));
+                });
             state
-                .key_store
-                .read()
+                .orchestrator
+                .resolve_api_key(key_reference, &config_backend)
                 .await
-                .get(env_name)
-                .cloned()
                 .unwrap_or_default()
         }
     };
+    if api_key.is_empty() {
+        return Ok(serde_json::json!({
+            "ok": false,
+            "message": format!(
+                "No API key is configured for FIM model '{}'. Save the key in Model Settings.",
+                model_name
+            )
+        }));
+    }
 
     // 5. Model ID: user config value → model_name as fallback
     let model = if model.is_empty() {
