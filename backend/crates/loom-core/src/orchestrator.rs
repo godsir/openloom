@@ -5017,14 +5017,29 @@ persona 必须包含(每一项都要落到具体技术/工具/场景上)：
             summary,
             temperature: agent_config.temperature.unwrap_or(0.0),
             max_iterations: agent_config.max_iterations.unwrap_or(default_max_iters),
-            // Max output tokens per LLM call. 32768 is generous enough for large tool
-            // calls (file_write with multi-KB content) while still bounding runaway loops.
-            // When skills are active (which often generate large files), let the model
+            // Max output tokens per LLM call. An explicit max_output_tokens in the
+            // active model config always wins — the user-facing setting must not be
+            // silently overridden. Otherwise 32768 is generous enough for large tool
+            // calls (file_write with multi-KB content) while still bounding runaway
+            // loops; with skills active (often generating large files), let the model
             // use its own default.
-            max_tokens: if effective_selected_skills.is_empty() {
-                32768
-            } else {
-                0
+            max_tokens: {
+                let name = self
+                    .active_model_name
+                    .read()
+                    .await
+                    .clone()
+                    .unwrap_or_default();
+                self.model_configs
+                    .read()
+                    .await
+                    .get(&name)
+                    .and_then(|c| c.max_output_tokens.filter(|n| *n > 0))
+                    .unwrap_or(if effective_selected_skills.is_empty() {
+                        32768
+                    } else {
+                        0
+                    })
             },
             thinking_budget,
             model_configs: self.model_configs.read().await.values().cloned().collect(),

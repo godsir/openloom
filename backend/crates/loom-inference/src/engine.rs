@@ -707,6 +707,13 @@ impl CloudClient for InferenceEngine {
         // (finish_reason == "length"). Surfaced at stream end via Finish so the
         // agent loop can seamlessly continue a cut-off reply.
         let mut truncated = false;
+        // Terminal-frame tracking: a well-formed OpenAI-compatible stream ends
+        // with a [DONE] frame, and every completed choice carries a
+        // finish_reason. If the byte stream ends with neither observed, the
+        // connection was cut mid-reply — treat it as truncation so the agent
+        // loop auto-continues instead of silently ending half a reply.
+        let mut saw_terminal = false;
+        let mut forwarded_content = false;
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
         match cache_status {
@@ -782,8 +789,11 @@ impl CloudClient for InferenceEngine {
                         }
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
                             let d = &val["choices"][0]["delta"];
-                            if val["choices"][0]["finish_reason"].as_str() == Some("length") {
-                                truncated = true;
+                            if let Some(fr) = val["choices"][0]["finish_reason"].as_str() {
+                                saw_terminal = true;
+                                if fr == "length" {
+                                    truncated = true;
+                                }
                             }
                             if let Some(r) = d["reasoning_content"].as_str()
                                 && !r.is_empty()
@@ -796,9 +806,11 @@ impl CloudClient for InferenceEngine {
                             }
                             if let Some(t) = d["content"].as_str()
                                 && !t.is_empty()
-                                && tx.send(StreamDelta::Text(t.to_string())).await.is_err()
                             {
-                                return Ok(());
+                                forwarded_content = true;
+                                if tx.send(StreamDelta::Text(t.to_string())).await.is_err() {
+                                    return Ok(());
+                                }
                             }
                             if let Some(tcs) = d["tool_calls"].as_array() {
                                 for tc in tcs {
@@ -807,7 +819,9 @@ impl CloudClient for InferenceEngine {
                                         (tc["id"].as_str(), tc["function"]["name"].as_str())
                                         && !id.is_empty()
                                         && !name.is_empty()
-                                        && tx
+                                    {
+                                        forwarded_content = true;
+                                        if tx
                                             .send(StreamDelta::ToolCallBegin {
                                                 index: idx,
                                                 id: id.to_string(),
@@ -815,8 +829,9 @@ impl CloudClient for InferenceEngine {
                                             })
                                             .await
                                             .is_err()
-                                    {
-                                        return Ok(());
+                                        {
+                                            return Ok(());
+                                        }
                                     }
                                     if let Some(args) = tc["function"]["arguments"].as_str()
                                         && !args.is_empty()
@@ -860,6 +875,19 @@ impl CloudClient for InferenceEngine {
             if done {
                 break;
             }
+        }
+        if !saw_terminal {
+            if !forwarded_content {
+                // Nothing reached the user yet — surface as a transient error so
+                // the agent loop retries with backoff instead of ending empty.
+                return Err(anyhow::anyhow!(
+                    "connection closed before any response (no [DONE] frame)"
+                ));
+            }
+            tracing::warn!(
+                "stream ended without [DONE]/finish_reason; treating as truncated to auto-continue"
+            );
+            truncated = true;
         }
         let _ = tx.send(StreamDelta::Finish { truncated }).await;
         Ok(())

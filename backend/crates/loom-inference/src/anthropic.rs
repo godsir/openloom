@@ -515,6 +515,13 @@ impl CloudClient for AnthropicClient {
         // (stop_reason == "max_tokens"). Surfaced at stream end via Finish so
         // the agent loop can seamlessly continue a cut-off reply.
         let mut truncated = false;
+        // Terminal-event tracking: a well-formed Anthropic stream always ends
+        // with message_delta (carrying stop_reason) followed by message_stop.
+        // If the byte stream ends with neither observed, the connection was cut
+        // mid-reply — treat it as truncation so the agent loop auto-continues
+        // instead of silently ending half a reply.
+        let mut saw_terminal = false;
+        let mut forwarded_content = false;
         let digest = self.pending_digest.lock().unwrap().clone();
         let (cache_status, _, _reasons) = self.prefix_cache.check_digest(&digest);
         match cache_status {
@@ -603,6 +610,7 @@ impl CloudClient for AnthropicClient {
                                     .unwrap_or("?")
                                     .to_string();
                                 active_tool_index = Some(idx);
+                                forwarded_content = true;
                                 let _ = tx
                                     .send(StreamDelta::ToolCallBegin {
                                         index: idx,
@@ -613,13 +621,15 @@ impl CloudClient for AnthropicClient {
                             }
                             Some("content_block_delta") => match val["delta"]["type"].as_str() {
                                 Some("text_delta") => {
-                                    if let Some(text) = val["delta"]["text"].as_str()
-                                        && tx
+                                    if let Some(text) = val["delta"]["text"].as_str() {
+                                        forwarded_content = true;
+                                        if tx
                                             .send(StreamDelta::Text(text.to_string()))
                                             .await
                                             .is_err()
-                                    {
-                                        return Ok(());
+                                        {
+                                            return Ok(());
+                                        }
                                     }
                                 }
                                 Some("thinking_delta") => {
@@ -646,6 +656,9 @@ impl CloudClient for AnthropicClient {
                                 _ => {}
                             },
                             Some("message_delta") => {
+                                if val["delta"]["stop_reason"].is_string() {
+                                    saw_terminal = true;
+                                }
                                 if val["delta"]["stop_reason"].as_str() == Some("max_tokens") {
                                     truncated = true;
                                 }
@@ -676,6 +689,9 @@ impl CloudClient for AnthropicClient {
                                     })
                                     .await;
                             }
+                            Some("message_stop") => {
+                                saw_terminal = true;
+                            }
                             _ => {}
                         }
                     }
@@ -684,6 +700,19 @@ impl CloudClient for AnthropicClient {
             if done {
                 break;
             }
+        }
+        if !saw_terminal {
+            if !forwarded_content {
+                // Nothing reached the user yet — surface as a transient error so
+                // the agent loop retries with backoff instead of ending empty.
+                return Err(anyhow::anyhow!(
+                    "connection closed before any response (no message_stop event)"
+                ));
+            }
+            tracing::warn!(
+                "stream ended without message_stop/stop_reason; treating as truncated to auto-continue"
+            );
+            truncated = true;
         }
         let _ = tx.send(StreamDelta::Finish { truncated }).await;
         Ok(())
